@@ -29,7 +29,7 @@ function monthsAgoIsoDate(months: number): string {
  */
 export async function ingestAssessorComps(): Promise<IngestSummary> {
   const supabase = getSupabaseClient();
-  const sinceIsoDate = monthsAgoIsoDate(config.assessorIngestWindowMonths);
+  const sinceIsoDate = monthsAgoIsoDate(config.assessorLookbackMonths);
 
   // Pass 1 — sales affidavits → comp candidates (one row per parcel).
   const affidavitStream = await streamSalesAffidavits();

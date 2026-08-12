@@ -3,16 +3,24 @@
 ## 1. Supabase
 
 1. Create a project at supabase.com.
-2. In the SQL editor, run `supabase/migrations/0001_init.sql`.
+2. In the SQL editor, run each file in `supabase/migrations/` in order
+   (`0001_init.sql`, then `0002_comp_window_12mo.sql`).
 3. Copy the project URL and the **service role** key (Settings → API) into
    `SUPABASE_URL` / `SUPABASE_SERVICE_ROLE_KEY`.
 
 ## 2. Maricopa Assessor data
 
-No key needed. Enrichment joins two **public** ArcGIS bulk downloads locally —
-Sales Affidavits (sale price/date per parcel) and Residential Master (livable
-sqft, year built, pool) — so there are no per-parcel API calls to rate-limit.
-Nothing to configure here.
+The **comp backfill needs no key** — it joins two public ArcGIS bulk downloads
+locally (Sales Affidavits + Residential Master), so there are no per-parcel API
+calls to rate-limit.
+
+A token *is* needed for the **live API**, used only by the on-demand parcel
+lookup (`GET /api/parcel/{apn}`, authenticated with `CRON_SECRET`) for
+real-time single-property checks:
+
+1. Go to https://www.mcassessor.maricopa.gov/contact/
+2. Set Subject to "API Question/Token".
+3. Put the emailed token in `MARICOPA_API_TOKEN` (local `.env` + Vercel).
 
 ## 3. Resend
 
@@ -47,8 +55,8 @@ and confirm rows land in `clozers_listings`.
 
 1. Import the repo into Vercel.
 2. Set env vars: `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`,
-   `RESEND_API_KEY`, `DIGEST_TO_EMAIL`, `DIGEST_FROM_EMAIL`, `CRON_SECRET`
-   (generate with `openssl rand -hex 32`).
+   `MARICOPA_API_TOKEN`, `RESEND_API_KEY`, `DIGEST_TO_EMAIL`,
+   `DIGEST_FROM_EMAIL`, `CRON_SECRET` (generate with `openssl rand -hex 32`).
 3. `vercel.json` already defines all three cron schedules; Vercel picks them
    up on deploy. Cron requires a Pro plan for the 300s `maxDuration` on
    `/api/cron/assessor-refresh`.

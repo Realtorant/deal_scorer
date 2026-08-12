@@ -22,13 +22,11 @@ export const config = {
   // over the zip-level fallback.
   minSubdivisionComps: envNumber("MIN_SUBDIVISION_COMPS", 3),
 
-  // Trailing window, in months, used by the comp_averages view.
+  // Trailing comp window, in months. The ingest filters sales affidavits to this
+  // window before joining against the Residential Master file. The comp_averages
+  // SQL views apply the SAME window (hardcoded, since a view can't read env) — if
+  // you change this, update supabase/migrations to match (see 0002).
   assessorLookbackMonths: envNumber("ASSESSOR_LOOKBACK_MONTHS", 12),
-
-  // Sales affidavits are filtered down to this window before joining against the
-  // Residential Master file, so a full-history file doesn't become a full-history
-  // comp set. Wider than assessorLookbackMonths on purpose, as a buffer.
-  assessorIngestWindowMonths: envNumber("ASSESSOR_INGEST_WINDOW_MONTHS", 24),
 
   // Clozers listings older than this (by scraped_at) are treated as stale/likely
   // sold and excluded from scoring, so they don't linger in the digest forever if
