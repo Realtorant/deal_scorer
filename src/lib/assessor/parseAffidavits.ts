@@ -86,6 +86,9 @@ export async function* parseAffidavits(
   options: ParseAffidavitsOptions
 ): AsyncGenerator<AffidavitRow> {
   const rl = createInterface({ input: stream, crlfDelay: Infinity });
+  // Sales recorded with a future month are data-entry artifacts; exclude them so
+  // a bogus future sale can't compute a $/sqft and skew the comp averages.
+  const todayIsoDate = new Date().toISOString().slice(0, 10);
 
   let isFirstLine = true;
   let headerIndex: Record<string, number> = {};
@@ -118,7 +121,7 @@ export async function* parseAffidavits(
     if (!Number.isFinite(salePrice) || salePrice <= 0) continue;
 
     const saleDate = parseSaleDateMMYYYY(get("SALEDATE_MMYYYY"));
-    if (!saleDate || saleDate < options.sinceIsoDate) continue;
+    if (!saleDate || saleDate < options.sinceIsoDate || saleDate > todayIsoDate) continue;
 
     const parcelNumber = get("PARCELNUMBER").trim();
     if (!parcelNumber) continue;
