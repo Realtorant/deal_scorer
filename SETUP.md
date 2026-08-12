@@ -7,14 +7,12 @@
 3. Copy the project URL and the **service role** key (Settings → API) into
    `SUPABASE_URL` / `SUPABASE_SERVICE_ROLE_KEY`.
 
-## 2. Maricopa Assessor API token
+## 2. Maricopa Assessor data
 
-The Sales Affidavits bulk download needs no auth, but per-parcel enrichment
-(livable sqft, year built, pool, subdivision) does. Request a token:
-
-1. Go to https://www.mcassessor.maricopa.gov/contact/
-2. Set Subject to "API Question/Token".
-3. Their web developer emails a token back. Put it in `MARICOPA_API_TOKEN`.
+No key needed. Enrichment joins two **public** ArcGIS bulk downloads locally —
+Sales Affidavits (sale price/date per parcel) and Residential Master (livable
+sqft, year built, pool) — so there are no per-parcel API calls to rate-limit.
+Nothing to configure here.
 
 ## 3. Resend
 
@@ -49,26 +47,24 @@ and confirm rows land in `clozers_listings`.
 
 1. Import the repo into Vercel.
 2. Set env vars: `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`,
-   `MARICOPA_API_TOKEN`, `RESEND_API_KEY`, `DIGEST_TO_EMAIL`,
-   `DIGEST_FROM_EMAIL`, `CRON_SECRET` (generate with `openssl rand -hex 32`).
+   `RESEND_API_KEY`, `DIGEST_TO_EMAIL`, `DIGEST_FROM_EMAIL`, `CRON_SECRET`
+   (generate with `openssl rand -hex 32`).
 3. `vercel.json` already defines all three cron schedules; Vercel picks them
    up on deploy. Cron requires a Pro plan for the 300s `maxDuration` on
    `/api/cron/assessor-refresh`.
 
 ## 6. Initial Assessor backfill
 
-The weekly cron only processes new/changed sales since last run — capped at
-`ASSESSOR_MAX_ENRICH_PER_RUN` (default 500) per invocation so it can't blow
-through the function timeout. For the **first** run, there's a ~24-month
-backlog of comps to enrich (tens of thousands of parcels), which won't fit in
-one invocation. Either:
+The assessor-refresh ingest joins the two bulk files and upserts every SFR sale
+in the window each run — idempotent, no rate limits. Seed it locally once:
 
-- Trigger `/api/cron/assessor-refresh` manually (with the `CRON_SECRET`
-  header) repeatedly until `summary.candidatesInWindow === summary.upserted +
-  <already up to date>`, or
-- Temporarily raise `ASSESSOR_MAX_ENRICH_PER_RUN` and run it locally via
-  `next dev` against the real Supabase project, where there's no serverless
-  timeout.
+```bash
+npm run backfill:assessor
+```
+
+(needs `SUPABASE_URL` + `SUPABASE_SERVICE_ROLE_KEY` in `.env`). It downloads
+both ZIPs, joins them, and upserts ~100k comps in a few minutes. The weekly
+Vercel cron then re-runs the same ingest to keep them fresh.
 
 ## 7. Tuning
 

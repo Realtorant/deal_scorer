@@ -25,18 +25,10 @@ export const config = {
   // Trailing window, in months, used by the comp_averages view.
   assessorLookbackMonths: envNumber("ASSESSOR_LOOKBACK_MONTHS", 12),
 
-  // Sales affidavits are filtered down to this window before any API enrichment is
-  // attempted, so a full-history file doesn't turn into full-history API traffic.
-  // Wider than assessorLookbackMonths on purpose, as a buffer.
+  // Sales affidavits are filtered down to this window before joining against the
+  // Residential Master file, so a full-history file doesn't become a full-history
+  // comp set. Wider than assessorLookbackMonths on purpose, as a buffer.
   assessorIngestWindowMonths: envNumber("ASSESSOR_INGEST_WINDOW_MONTHS", 24),
-
-  // Caps how many new/changed parcels get enriched via the Assessor API per cron
-  // invocation, so a big backlog can't blow through the Vercel function timeout.
-  // Re-running the cron (or waiting for next week's run) drains the backlog gradually.
-  assessorMaxEnrichPerRun: envNumber("ASSESSOR_MAX_ENRICH_PER_RUN", 500),
-
-  // Concurrent requests against api.mcassessor.maricopa.gov during enrichment.
-  assessorApiConcurrency: envNumber("ASSESSOR_API_CONCURRENCY", 8),
 
   // Clozers listings older than this (by scraped_at) are treated as stale/likely
   // sold and excluded from scoring, so they don't linger in the digest forever if

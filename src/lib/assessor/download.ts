@@ -1,23 +1,29 @@
 import { Readable } from "node:stream";
 import unzipper from "unzipper";
 
-// Confirmed via https://www.mcassessor.maricopa.gov/page/data_sales/ -> ArcGIS Open Data item
-// "Sales_Affidavits.zip" (item id f3484c72a938497286adc4e5de7e9963). This is a stable,
-// unauthenticated, public ArcGIS content URL — no scraping or token required. Updated weekly.
-const SALES_AFFIDAVITS_URL =
-  "https://www.arcgis.com/sharing/rest/content/items/f3484c72a938497286adc4e5de7e9963/data";
+// Public ArcGIS Open Data items published by the Maricopa Assessor. Both are
+// stable, unauthenticated content URLs — a straight ZIP download, no token,
+// no scraping. Confirmed via https://www.mcassessor.maricopa.gov/page/data_sales/.
+const SALES_AFFIDAVITS_ITEM = "f3484c72a938497286adc4e5de7e9963"; // updated weekly
+const RESIDENTIAL_MASTER_ITEM = "e22983d41d91490d90965544b718a120"; // updated twice a month
 
-const DATA_ENTRY_PATH = "Data/Sales_Affidavits.txt";
+function itemDataUrl(itemId: string): string {
+  return `https://www.arcgis.com/sharing/rest/content/items/${itemId}/data`;
+}
 
 /**
- * Streams the Sales Affidavits ZIP and returns a readable stream of the pipe-delimited
- * data file inside it, without buffering the ~60MB zip / ~270MB uncompressed text in memory.
+ * Streams an ArcGIS "CSV Collection" ZIP and resolves to a readable stream of the
+ * named pipe-delimited entry inside it, without buffering the whole (60MB zip /
+ * hundreds-of-MB uncompressed) file in memory.
  */
-export async function streamSalesAffidavits(): Promise<NodeJS.ReadableStream> {
-  const response = await fetch(SALES_AFFIDAVITS_URL);
+async function streamArcgisZipEntry(
+  itemId: string,
+  entryPath: string
+): Promise<NodeJS.ReadableStream> {
+  const response = await fetch(itemDataUrl(itemId));
   if (!response.ok || !response.body) {
     throw new Error(
-      `Failed to download Sales Affidavits ZIP: ${response.status} ${response.statusText}`
+      `Failed to download ArcGIS item ${itemId}: ${response.status} ${response.statusText}`
     );
   }
 
@@ -29,7 +35,7 @@ export async function streamSalesAffidavits(): Promise<NodeJS.ReadableStream> {
     zipStream
       .pipe(unzipper.Parse())
       .on("entry", (entry: unzipper.Entry) => {
-        if (entry.path === DATA_ENTRY_PATH) {
+        if (entry.path === entryPath) {
           resolve(entry);
         } else {
           entry.autodrain();
@@ -37,4 +43,12 @@ export async function streamSalesAffidavits(): Promise<NodeJS.ReadableStream> {
       })
       .on("error", reject);
   });
+}
+
+export function streamSalesAffidavits(): Promise<NodeJS.ReadableStream> {
+  return streamArcgisZipEntry(SALES_AFFIDAVITS_ITEM, "Data/Sales_Affidavits.txt");
+}
+
+export function streamResidentialMaster(): Promise<NodeJS.ReadableStream> {
+  return streamArcgisZipEntry(RESIDENTIAL_MASTER_ITEM, "Data/Residential_Master.txt");
 }
