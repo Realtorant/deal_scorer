@@ -12,7 +12,8 @@
     "lint": "eslint .",
     "test": "vitest run",
     "scrape:clozers": "tsx scripts/clozers-scrape.ts",
-    "backfill:assessor": "tsx scripts/assessor-backfill.ts"
+    "backfill:assessor": "tsx scripts/assessor-backfill.ts",
+    "score": "tsx scripts/score.ts"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.45.4",
