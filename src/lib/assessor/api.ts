@@ -1,4 +1,8 @@
-const API_BASE = "https://api.mcassessor.maricopa.gov";
+// Confirmed live: the API is served from mcassessor.maricopa.gov (the api.* host
+// in the original spec resolves but refuses HTTPS connections). A single
+// /parcel/{apn} call returns everything we need — SubdivisionName at the top level
+// and building characteristics nested under ResidentialPropertyData.
+const API_BASE = "https://mcassessor.maricopa.gov";
 
 export interface ParcelEnrichment {
   livableSqft: number | null;
@@ -19,8 +23,10 @@ function requireToken(): string {
 async function callApi(path: string): Promise<Record<string, unknown> | null> {
   const response = await fetch(`${API_BASE}${path}`, {
     headers: {
+      // Header names/values per MC-Assessor-API-Documentation.pdf: custom
+      // AUTHORIZATION header with the token, user-agent set to null.
       AUTHORIZATION: requireToken(),
-      "user-agent": "",
+      "user-agent": "null",
     },
   });
 
@@ -31,12 +37,6 @@ async function callApi(path: string): Promise<Record<string, unknown> | null> {
   return (await response.json()) as Record<string, unknown>;
 }
 
-// The API doc (MC-Assessor-API-Documentation.pdf) only specifies endpoint paths, not
-// response field names — we don't have a token to confirm the exact JSON shape.
-// These candidate keys cover the most commonly seen conventions for this API; the
-// full raw response is always stored alongside so mapping can be corrected without
-// re-fetching once real responses are seen (first live run against MARICOPA_API_TOKEN
-// should double check these against `raw`).
 function pickNumber(obj: Record<string, unknown>, keys: string[]): number | null {
   for (const key of keys) {
     const value = obj[key];
@@ -70,43 +70,18 @@ function pickBoolean(obj: Record<string, unknown>, keys: string[]): boolean | nu
 }
 
 export async function getParcelEnrichment(apn: string): Promise<ParcelEnrichment> {
-  const propertyInfo = (await callApi(`/parcel/${encodeURIComponent(apn)}/propertyinfo`)) ?? {};
+  const parcel = (await callApi(`/parcel/${encodeURIComponent(apn)}`)) ?? {};
 
-  let subdivision = pickString(propertyInfo, [
-    "Subdivision",
-    "SubdivisionName",
-    "subdivision",
-  ]);
-
-  let raw: Record<string, unknown> = { propertyinfo: propertyInfo };
-
-  if (!subdivision) {
-    const parcelDetails = await callApi(`/parcel/${encodeURIComponent(apn)}`);
-    if (parcelDetails) {
-      raw = { ...raw, parcel: parcelDetails };
-      subdivision = pickString(parcelDetails, [
-        "Subdivision",
-        "SubdivisionName",
-        "subdivision",
-      ]);
-    }
-  }
+  const residential =
+    (parcel.ResidentialPropertyData as Record<string, unknown> | undefined) ?? {};
 
   return {
-    livableSqft: pickNumber(propertyInfo, [
-      "LivableSpace",
-      "LivableSqft",
-      "LivingArea",
-      "SquareFeet",
-      "sqft",
-    ]),
-    yearBuilt: pickNumber(propertyInfo, [
-      "ConstructionYear",
-      "YearBuilt",
-      "yearBuilt",
-    ]),
-    pool: pickBoolean(propertyInfo, ["Pool", "PoolIndicator", "pool"]),
-    subdivision,
-    raw,
+    // Field names confirmed against live responses (LivableSpace/ConstructionYear
+    // come back as numeric strings; Pool is a real boolean).
+    livableSqft: pickNumber(residential, ["LivableSpace", "Detached_Livable_sqft"]),
+    yearBuilt: pickNumber(residential, ["ConstructionYear", "OriginalConstructionYear"]),
+    pool: pickBoolean(residential, ["Pool"]),
+    subdivision: pickString(parcel, ["SubdivisionName"]),
+    raw: parcel,
   };
 }
