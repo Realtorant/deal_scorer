@@ -30,7 +30,10 @@ real-time single-property checks:
    only reach your own Resend account email, from `onboarding@resend.dev`.
 3. Set `DIGEST_FROM_EMAIL` to an address on the verified domain
    (`"Deal Checker <deals@antrealestateco.com>"`) and `DIGEST_TO_EMAIL` to the
-   digest recipient (`almazan@thebrokery.com`). Set both in Vercel too.
+   digest recipient (`anthony@antrealestateco.com`). Set both in Vercel too.
+   Note: until the domain fully verifies for the API key's Resend team, the only
+   working sender is `onboarding@resend.dev`, which can *only* reach the account
+   owner address (`anthony@antrealestateco.com`).
 
 ## 4. Clozers scraper (`src/lib/clozers/fetchDeals.ts`)
 
