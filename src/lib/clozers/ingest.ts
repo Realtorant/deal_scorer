@@ -25,6 +25,8 @@ export async function ingestClozersListings(): Promise<ClozersIngestSummary> {
     subdivision: listing.subdivision,
     posted_date: listing.posted_date,
     url: listing.url,
+    lat: listing.lat,
+    long: listing.long,
     raw: listing.raw ?? null,
     scraped_at: new Date().toISOString(),
   }));

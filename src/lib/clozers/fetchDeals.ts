@@ -32,6 +32,8 @@ interface RawClozersDeal {
   // off this, not postedAt (confirmed against a live sample — postedAt can be
   // much older than lastSeenAt for a deal that's still being resurfaced).
   lastSeenAt: { _seconds: number; _nanoseconds: number } | null;
+  latitude: number | null;
+  longitude: number | null;
   postUrl: string | null;
   address: {
     zipcode: string | null;
@@ -87,6 +89,8 @@ function normalize(deal: RawClozersDeal): ClozersListing | null {
     subdivision: null, // Clozers doesn't expose subdivision; scoring falls back to zip.
     posted_date: deal.postedAt ? deal.postedAt.slice(0, 10) : null,
     url: pickListingUrl(deal),
+    lat: deal.latitude ?? null,
+    long: deal.longitude ?? null,
     raw: deal as unknown as Record<string, unknown>,
   };
 }

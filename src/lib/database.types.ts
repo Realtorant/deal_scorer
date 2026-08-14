@@ -48,6 +48,8 @@ export interface Database {
           subdivision: string | null;
           posted_date: string | null;
           url: string;
+          lat: number | null;
+          long: number | null;
           raw: Record<string, unknown> | null;
           scraped_at: string;
         };
@@ -63,17 +65,35 @@ export interface Database {
           subdivision?: string | null;
           posted_date?: string | null;
           url: string;
+          lat?: number | null;
+          long?: number | null;
           raw?: Record<string, unknown> | null;
           scraped_at?: string;
         };
         Update: Partial<Database["public"]["Tables"]["clozers_listings"]["Insert"]>;
         Relationships: [];
       };
+      parcel_coords: {
+        Row: {
+          parcel_number: string;
+          lat: number;
+          long: number;
+          updated_at: string;
+        };
+        Insert: {
+          parcel_number: string;
+          lat: number;
+          long: number;
+          updated_at?: string;
+        };
+        Update: Partial<Database["public"]["Tables"]["parcel_coords"]["Insert"]>;
+        Relationships: [];
+      };
       scored_listings: {
         Row: {
           id: number;
           listing_id: string;
-          comp_source: "subdivision" | "zip" | null;
+          comp_source: "radius" | "zip" | null;
           area_price_per_sqft: number | null;
           list_price_per_sqft: number | null;
           pct_below_area: number | null;
@@ -91,7 +111,7 @@ export interface Database {
         Insert: {
           id?: number;
           listing_id: string;
-          comp_source?: "subdivision" | "zip" | null;
+          comp_source?: "radius" | "zip" | null;
           area_price_per_sqft?: number | null;
           list_price_per_sqft?: number | null;
           pct_below_area?: number | null;
@@ -126,6 +146,17 @@ export interface Database {
           avg_price_per_sqft: number | null;
           comp_count: number | null;
           most_recent_sale: string | null;
+        };
+        Relationships: [];
+      };
+      comps_with_coords: {
+        Row: {
+          parcel_number: string | null;
+          zip: string | null;
+          livable_sqft: number | null;
+          price_per_sqft: number | null;
+          lat: number | null;
+          long: number | null;
         };
         Relationships: [];
       };

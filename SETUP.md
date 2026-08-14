@@ -4,7 +4,7 @@
 
 1. Create a project at supabase.com.
 2. In the SQL editor, run each file in `supabase/migrations/` in order
-   (`0001_init.sql`, then `0002_comp_window_12mo.sql`).
+   (`0001_init.sql`, `0002_comp_window_12mo.sql`, `0003_parcel_coords.sql`).
 3. Copy the project URL and the **service role** key (Settings → API) into
    `SUPABASE_URL` / `SUPABASE_SERVICE_ROLE_KEY`.
 
@@ -81,7 +81,31 @@ npm run backfill:assessor
 both ZIPs, joins them, and upserts ~100k comps in a few minutes. The weekly
 Vercel cron then re-runs the same ingest to keep them fresh.
 
-## 7. Tuning
+## 7. Parcel coordinates (for radius comps)
+
+Scoring picks comps by distance + size, not zip — it needs a lat/long for each
+comp parcel. Coords come from the Assessor's Parcel Points shapefile, joined by
+APN into the `parcel_coords` table (migration `0003`). Refresh them periodically
+(monthly is plenty — parcel centroids are static) with an offline Python job:
+
+```bash
+python3 -m pip install pyshp pyproj
+python3 scripts/backfill_coords.py
+```
+
+Run it **after** the assessor backfill (it only fetches coords for parcels
+already in `assessor_comps`). Comps without coords fall back to the zip-level
+average until the next coord refresh. Subject coordinates come free from the
+Clozers feed and populate on the next scrape.
+
+Comp selection ladder (first tier reaching `COMP_MIN_COUNT` wins, else zip-level):
+1 mi / ±15% sqft → 1.5 mi / ±15% → 1.5 mi / ±20% → zip average. Listings whose
+zip is outside Maricopa coverage are logged to `scored_listings`
+(`flag_reason = 'out of county…'`, never emailed) so multi-county expansion can
+be sized later:
+`select zip, count(*) from scored_listings where flag_reason like 'out of county%' group by zip;`
+
+## 8. Tuning
 
 `REHAB_PER_SQFT` and `BELOW_AVG_THRESHOLD` (and the margin threshold) are
 explicit placeholders — see comments in `src/lib/config.ts`. Revisit them

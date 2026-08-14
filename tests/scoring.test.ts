@@ -1,6 +1,19 @@
 import { describe, expect, it } from "vitest";
-import { pickAreaComp, scoreListing, type CompLookup } from "../src/lib/scoring";
-import type { ClozersListing } from "../src/lib/types";
+import {
+  haversineMiles,
+  scoreListing,
+  selectRadiusComp,
+} from "../src/lib/scoring";
+import type { AreaComp, ClozersListing, Comp } from "../src/lib/types";
+
+// A subject in central Phoenix.
+const SUBJ = { lat: 33.45, long: -112.07, sqft: 1500 };
+
+// Build a comp offset from the subject by ~`miles` east, with given sqft.
+function compAt(milesEast: number, sqft: number, ppsf: number): Comp {
+  const dLong = milesEast / (69 * Math.cos((SUBJ.lat * Math.PI) / 180));
+  return { lat: SUBJ.lat, long: SUBJ.long + dLong, sqft, pricePerSqft: ppsf };
+}
 
 function listing(overrides: Partial<ClozersListing> = {}): ClozersListing {
   return {
@@ -10,121 +23,111 @@ function listing(overrides: Partial<ClozersListing> = {}): ClozersListing {
     beds: 3,
     baths: 2,
     sqft: 1500,
-    zip: "85260",
-    subdivision: "Sunny Acres",
-    posted_date: "2026-07-20",
-    url: "https://app.clozers.co/listing/l1",
+    zip: "85007",
+    subdivision: null,
+    posted_date: "2026-08-01",
+    url: "https://app.clozers.co/x",
+    lat: SUBJ.lat,
+    long: SUBJ.long,
     ...overrides,
   };
 }
 
-function comps(overrides: Partial<CompLookup> = {}): CompLookup {
-  return {
-    bySubdivision: new Map(),
-    byZip: new Map(),
-    ...overrides,
-  };
-}
+describe("haversineMiles", () => {
+  it("is ~0 for identical points", () => {
+    expect(haversineMiles(33.45, -112.07, 33.45, -112.07)).toBeLessThan(0.001);
+  });
+  it("matches a known ~1 mile offset", () => {
+    const c = compAt(1.0, 1500, 200);
+    expect(haversineMiles(SUBJ.lat, SUBJ.long, c.lat, c.long)).toBeCloseTo(1.0, 1);
+  });
+});
 
-describe("pickAreaComp", () => {
-  it("prefers subdivision comp when it meets the minimum comp count", () => {
-    const lookup = comps({
-      bySubdivision: new Map([
-        ["Sunny Acres", { source: "subdivision", key: "Sunny Acres", avgPricePerSqft: 250, compCount: 5 }],
-      ]),
-      byZip: new Map([
-        ["85260", { source: "zip", key: "85260", avgPricePerSqft: 200, compCount: 50 }],
-      ]),
-    });
-
-    const result = pickAreaComp(listing(), lookup);
-    expect(result?.source).toBe("subdivision");
-    expect(result?.avgPricePerSqft).toBe(250);
+describe("selectRadiusComp ladder", () => {
+  it("uses tier 1 (1mi/±15%) when >=5 comps qualify", () => {
+    const comps = Array.from({ length: 6 }, () => compAt(0.5, 1500, 250));
+    const r = selectRadiusComp(SUBJ, comps);
+    expect(r?.source).toBe("radius");
+    expect(r?.key).toBe("1mi/±15%");
+    expect(r?.compCount).toBe(6);
+    expect(r?.avgPricePerSqft).toBe(250);
   });
 
-  it("falls back to zip comp when subdivision comp count is below the minimum", () => {
-    const lookup = comps({
-      bySubdivision: new Map([
-        ["Sunny Acres", { source: "subdivision", key: "Sunny Acres", avgPricePerSqft: 250, compCount: 1 }],
-      ]),
-      byZip: new Map([
-        ["85260", { source: "zip", key: "85260", avgPricePerSqft: 200, compCount: 50 }],
-      ]),
-    });
-
-    const result = pickAreaComp(listing(), lookup);
-    expect(result?.source).toBe("zip");
+  it("falls to tier 2 (1.5mi) when tier 1 is short", () => {
+    // 3 comps at 0.5mi (within 1mi) + 3 comps at 1.3mi (only within 1.5mi):
+    // tier1 sees 3 (<5), tier2 sees 6.
+    const comps = [
+      ...Array.from({ length: 3 }, () => compAt(0.5, 1500, 200)),
+      ...Array.from({ length: 3 }, () => compAt(1.3, 1500, 300)),
+    ];
+    const r = selectRadiusComp(SUBJ, comps);
+    expect(r?.key).toBe("1.5mi/±15%");
+    expect(r?.compCount).toBe(6);
+    expect(r?.avgPricePerSqft).toBe(250);
   });
 
-  it("returns null when no comps exist for either dimension", () => {
-    expect(pickAreaComp(listing(), comps())).toBeNull();
+  it("falls to tier 3 (±20%) when size band must widen", () => {
+    // 5 comps at 1.3mi sized 1750 (within ±20% of 1500 = 1200..1800, but outside
+    // ±15% = 1275..1725). tier1/tier2 (±15%) see 0; tier3 (±20%) sees 5.
+    const comps = Array.from({ length: 5 }, () => compAt(1.3, 1750, 220));
+    const r = selectRadiusComp(SUBJ, comps);
+    expect(r?.key).toBe("1.5mi/±20%");
+    expect(r?.compCount).toBe(5);
+  });
+
+  it("returns null when no tier reaches the minimum", () => {
+    const comps = Array.from({ length: 4 }, () => compAt(0.5, 1500, 250)); // only 4
+    expect(selectRadiusComp(SUBJ, comps)).toBeNull();
+  });
+
+  it("excludes comps beyond 1.5 miles and outside ±20% sqft", () => {
+    const comps = [
+      ...Array.from({ length: 10 }, () => compAt(2.0, 1500, 250)), // too far
+      ...Array.from({ length: 10 }, () => compAt(0.5, 2500, 250)), // too big
+    ];
+    expect(selectRadiusComp(SUBJ, comps)).toBeNull();
+  });
+
+  it("returns null without subject coordinates", () => {
+    const comps = Array.from({ length: 6 }, () => compAt(0.5, 1500, 250));
+    expect(selectRadiusComp({ lat: null, long: null, sqft: 1500 }, comps)).toBeNull();
   });
 });
 
 describe("scoreListing", () => {
-  it("flags on margin threshold", () => {
-    // area avg $250/sqft * 1500 sqft = 375,000 ARV
-    // rehab @ $25/sqft * 1500 = 37,500
-    // price 250,000 -> margin = (375000 - 250000 - 37500) / 375000 = 23.3%
-    const lookup = comps({
-      byZip: new Map([
-        ["85260", { source: "zip", key: "85260", avgPricePerSqft: 250, compCount: 10 }],
-      ]),
-    });
+  const zipComp: AreaComp = {
+    source: "zip",
+    key: "85007",
+    avgPricePerSqft: 240,
+    compCount: 50,
+  };
 
-    const result = scoreListing(listing({ price: 250000 }), lookup);
-    expect(result.flagged).toBe(true);
-    expect(result.flag_reason).toContain("margin");
-    expect(result.margin_pct).toBeCloseTo(0.2333, 3);
+  it("flags on below-area signal using radius comps", () => {
+    // area $250/sqft, list 315000/1500 = $210/sqft -> 16% below
+    const comps = Array.from({ length: 6 }, () => compAt(0.5, 1500, 250));
+    const r = scoreListing(listing({ price: 315000 }), comps, zipComp);
+    expect(r.comp_source).toBe("radius");
+    expect(r.area_price_per_sqft).toBe(250);
+    expect(r.flagged).toBe(true);
+    expect(r.flag_reason).toContain("below area avg");
   });
 
-  it("flags on below-area-average list price even with low margin", () => {
-    // area avg $250/sqft, list price/sqft = $210 -> 16% below average
-    // ARV = 375,000, rehab = 37,500, price = 315,000
-    // margin = (375000 - 315000 - 37500) / 375000 = 5.7% (below margin threshold)
-    const lookup = comps({
-      byZip: new Map([
-        ["85260", { source: "zip", key: "85260", avgPricePerSqft: 250, compCount: 10 }],
-      ]),
-    });
-
-    const result = scoreListing(listing({ price: 315000, sqft: 1500 }), lookup);
-    expect(result.list_price_per_sqft).toBe(210);
-    expect(result.pct_below_area).toBeCloseTo(0.16, 3);
-    expect(result.flagged).toBe(true);
-    expect(result.flag_reason).toContain("below area avg");
-    expect(result.margin_pct).toBeLessThan(0.2);
+  it("falls back to zip comp when radius ladder finds too few", () => {
+    const comps = Array.from({ length: 2 }, () => compAt(0.5, 1500, 250));
+    const r = scoreListing(listing({ price: 300000 }), comps, zipComp);
+    expect(r.comp_source).toBe("zip");
+    expect(r.area_price_per_sqft).toBe(240);
   });
 
-  it("does not flag when neither signal clears its threshold", () => {
-    const lookup = comps({
-      byZip: new Map([
-        ["85260", { source: "zip", key: "85260", avgPricePerSqft: 250, compCount: 10 }],
-      ]),
-    });
-
-    // list price/sqft = $240 (4% below avg, under 12% threshold)
-    // ARV 375,000, rehab 37,500, price 360,000 -> margin ~ -6% (not flagged)
-    const result = scoreListing(listing({ price: 360000, sqft: 1500 }), lookup);
-    expect(result.flagged).toBe(false);
-    expect(result.flag_reason).toBeNull();
+  it("reports no comps when radius empty and no zip fallback", () => {
+    const r = scoreListing(listing(), [], null);
+    expect(r.flag_reason).toBe("no comps available");
+    expect(r.arv).toBeNull();
   });
 
-  it("skips scoring when no comps are available", () => {
-    const result = scoreListing(listing({ zip: "99999", subdivision: null }), comps());
-    expect(result.flagged).toBe(false);
-    expect(result.flag_reason).toBe("no comps available");
-    expect(result.arv).toBeNull();
-  });
-
-  it("skips scoring when sqft is missing", () => {
-    const lookup = comps({
-      byZip: new Map([
-        ["85260", { source: "zip", key: "85260", avgPricePerSqft: 250, compCount: 10 }],
-      ]),
-    });
-
-    const result = scoreListing(listing({ sqft: null }), lookup);
-    expect(result.flag_reason).toBe("missing sqft");
+  it("skips when sqft missing", () => {
+    const comps = Array.from({ length: 6 }, () => compAt(0.5, 1500, 250));
+    const r = scoreListing(listing({ sqft: null }), comps, zipComp);
+    expect(r.flag_reason).toBe("missing sqft");
   });
 });

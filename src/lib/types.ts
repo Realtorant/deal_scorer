@@ -11,10 +11,18 @@ export interface AssessorComp {
 }
 
 export interface AreaComp {
-  source: "subdivision" | "zip";
-  key: string;
+  source: "radius" | "zip";
+  key: string; // ladder tier label (radius) or zip code
   avgPricePerSqft: number;
   compCount: number;
+}
+
+// A single comp with coordinates, as loaded from the comps_with_coords view.
+export interface Comp {
+  lat: number;
+  long: number;
+  sqft: number;
+  pricePerSqft: number;
 }
 
 export interface ClozersListing {
@@ -28,12 +36,14 @@ export interface ClozersListing {
   subdivision: string | null;
   posted_date: string | null;
   url: string;
+  lat: number | null;
+  long: number | null;
   raw?: Record<string, unknown>;
 }
 
 export interface ScoredListing {
   listing_id: string;
-  comp_source: "subdivision" | "zip" | null;
+  comp_source: "radius" | "zip" | null;
   area_price_per_sqft: number | null;
   list_price_per_sqft: number | null;
   pct_below_area: number | null;

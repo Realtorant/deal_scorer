@@ -18,9 +18,11 @@ export const config = {
   // A listing is flagged if its list $/sqft is this far below the area average.
   belowAvgThreshold: envNumber("BELOW_AVG_THRESHOLD", 0.12),
 
-  // Minimum comp count required before trusting subdivision-level comps
-  // over the zip-level fallback.
-  minSubdivisionComps: envNumber("MIN_SUBDIVISION_COMPS", 3),
+  // Minimum comps a radius-ladder tier must find to be accepted. If no tier
+  // (see COMP_LADDER in scoring.ts) reaches this, scoring falls back to the
+  // zip-level average. Validated at 5 against real data (see the comp-radius
+  // report): ~99% of in-county subjects resolve via distance tiers at this value.
+  compMinCount: envNumber("COMP_MIN_COUNT", 5),
 
   // Trailing comp window, in months. The ingest filters sales affidavits to this
   // window before joining against the Residential Master file. The comp_averages

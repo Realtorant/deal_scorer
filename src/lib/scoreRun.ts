@@ -2,61 +2,91 @@ import { config } from "./config";
 import type { Database } from "./database.types";
 import { sendDigest, type DigestRow } from "./email";
 import { hashScoredListing } from "./scoreHash";
-import { scoreListing, type CompLookup } from "./scoring";
+import { scoreListing } from "./scoring";
 import { getSupabaseClient } from "./supabase";
-import type { AreaComp, ClozersListing } from "./types";
+import type { AreaComp, ClozersListing, Comp, ScoredListing } from "./types";
 
 type ScoredRow = Database["public"]["Tables"]["scored_listings"]["Insert"];
+type SupabaseClient = ReturnType<typeof getSupabaseClient>;
 
 export interface ScoreSummary {
   scored: number;
   emailed: number;
+  // Listings whose zip is outside Maricopa coverage: logged (as scored_listings
+  // rows with flag_reason) but not scored, so multi-county expansion can be sized
+  // later. Never emailed.
+  outOfCounty: number;
   // Set when the digest step failed. Scoring is already committed at that point,
   // so the run still succeeds — this just surfaces the delivery problem.
   emailError?: string;
 }
 
-async function loadCompLookup(
-  supabase: ReturnType<typeof getSupabaseClient>
-): Promise<CompLookup> {
-  const [zipComps, subdivisionComps] = await Promise.all([
-    supabase.from("comp_averages_by_zip").select("*"),
-    supabase.from("comp_averages_by_subdivision").select("*"),
-  ]);
+/** The radius comp pool (last-12mo SFR sales with coords), paged in full. */
+async function loadComps(supabase: SupabaseClient): Promise<Comp[]> {
+  const comps: Comp[] = [];
+  const PAGE = 1000;
+  for (let offset = 0; ; offset += PAGE) {
+    const { data, error } = await supabase
+      .from("comps_with_coords")
+      .select("lat,long,livable_sqft,price_per_sqft")
+      .range(offset, offset + PAGE - 1);
+    if (error) throw new Error(`Failed to load comps_with_coords: ${error.message}`);
+    if (!data || data.length === 0) break;
+    for (const r of data) {
+      if (r.lat === null || r.long === null || r.livable_sqft === null || r.price_per_sqft === null)
+        continue;
+      comps.push({ lat: r.lat, long: r.long, sqft: r.livable_sqft, pricePerSqft: r.price_per_sqft });
+    }
+    if (data.length < PAGE) break;
+  }
+  return comps;
+}
 
-  if (zipComps.error) throw new Error(`Failed to load zip comps: ${zipComps.error.message}`);
-  if (subdivisionComps.error)
-    throw new Error(`Failed to load subdivision comps: ${subdivisionComps.error.message}`);
+/** Zip-level fallback averages + the set of zips we consider "in coverage". */
+async function loadZipComps(
+  supabase: SupabaseClient
+): Promise<{ byZip: Map<string, AreaComp>; maricopaZips: Set<string> }> {
+  const { data, error } = await supabase.from("comp_averages_by_zip").select("*");
+  if (error) throw new Error(`Failed to load zip comps: ${error.message}`);
 
   const byZip = new Map<string, AreaComp>();
-  for (const row of zipComps.data ?? []) {
-    if (!row.zip || row.avg_price_per_sqft === null) continue;
-    byZip.set(row.zip, {
-      source: "zip",
-      key: row.zip,
-      avgPricePerSqft: row.avg_price_per_sqft,
-      compCount: row.comp_count ?? 0,
-    });
+  const maricopaZips = new Set<string>();
+  for (const row of data ?? []) {
+    if (!row.zip) continue;
+    maricopaZips.add(row.zip);
+    if (row.avg_price_per_sqft !== null) {
+      byZip.set(row.zip, {
+        source: "zip",
+        key: row.zip,
+        avgPricePerSqft: row.avg_price_per_sqft,
+        compCount: row.comp_count ?? 0,
+      });
+    }
   }
+  return { byZip, maricopaZips };
+}
 
-  const bySubdivision = new Map<string, AreaComp>();
-  for (const row of subdivisionComps.data ?? []) {
-    if (!row.subdivision || row.avg_price_per_sqft === null) continue;
-    bySubdivision.set(row.subdivision, {
-      source: "subdivision",
-      key: row.subdivision,
-      avgPricePerSqft: row.avg_price_per_sqft,
-      compCount: row.comp_count ?? 0,
-    });
-  }
-
-  return { byZip, bySubdivision };
+function outOfCountyResult(listingId: string): ScoredListing {
+  return {
+    listing_id: listingId,
+    comp_source: null,
+    area_price_per_sqft: null,
+    list_price_per_sqft: null,
+    pct_below_area: null,
+    arv: null,
+    rehab_estimate: null,
+    margin_pct: null,
+    comp_count: null,
+    flagged: false,
+    flag_reason: "out of county (zip not in Maricopa coverage)",
+  };
 }
 
 /**
- * Scores every active Clozers listing against the comp averages, upserts the
- * results, and emails a digest of the newly-flagged-or-changed ones. Shared by
- * the /api/cron/score route and the local `npm run score` script.
+ * Scores every active in-Maricopa Clozers listing against the radius comp ladder
+ * (zip-level fallback), logs out-of-county listings, upserts the results, and
+ * emails a digest of the newly-flagged-or-changed ones. Shared by the
+ * /api/cron/score route and the local `npm run score` script.
  */
 export async function runScoreAndDigest(): Promise<ScoreSummary> {
   const supabase = getSupabaseClient();
@@ -64,12 +94,10 @@ export async function runScoreAndDigest(): Promise<ScoreSummary> {
   const sinceScrapedAt = new Date();
   sinceScrapedAt.setUTCDate(sinceScrapedAt.getUTCDate() - config.clozersActiveWindowDays);
 
-  const [{ data: listingRows, error: listingsError }, compLookup] = await Promise.all([
-    supabase
-      .from("clozers_listings")
-      .select("*")
-      .gte("scraped_at", sinceScrapedAt.toISOString()),
-    loadCompLookup(supabase),
+  const [{ data: listingRows, error: listingsError }, comps, zipData] = await Promise.all([
+    supabase.from("clozers_listings").select("*").gte("scraped_at", sinceScrapedAt.toISOString()),
+    loadComps(supabase),
+    loadZipComps(supabase),
   ]);
 
   if (listingsError) {
@@ -87,10 +115,12 @@ export async function runScoreAndDigest(): Promise<ScoreSummary> {
     subdivision: row.subdivision,
     posted_date: row.posted_date,
     url: row.url,
+    lat: row.lat,
+    long: row.long,
   }));
 
   if (listings.length === 0) {
-    return { scored: 0, emailed: 0 };
+    return { scored: 0, emailed: 0, outOfCounty: 0 };
   }
 
   const listingIds = listings.map((l) => l.listing_id);
@@ -109,9 +139,16 @@ export async function runScoreAndDigest(): Promise<ScoreSummary> {
 
   const now = new Date().toISOString();
   const pendingEmail: { row: ScoredRow; digest: DigestRow; hash: string }[] = [];
+  let outOfCounty = 0;
 
   const upsertRows: ScoredRow[] = listings.map((listing) => {
-    const scored = scoreListing(listing, compLookup);
+    const inCoverage = listing.zip !== null && zipData.maricopaZips.has(listing.zip);
+    if (!inCoverage) outOfCounty += 1;
+
+    const scored: ScoredListing = inCoverage
+      ? scoreListing(listing, comps, zipData.byZip.get(listing.zip as string) ?? null)
+      : outOfCountyResult(listing.listing_id);
+
     const hash = hashScoredListing(scored);
     const existing = existingByListingId.get(listing.listing_id);
 
@@ -152,8 +189,10 @@ export async function runScoreAndDigest(): Promise<ScoreSummary> {
     throw new Error(`Failed to upsert scored_listings: ${upsertError.message}`);
   }
 
+  const scoredInCoverage = listings.length - outOfCounty;
+
   if (pendingEmail.length === 0) {
-    return { scored: listings.length, emailed: 0 };
+    return { scored: scoredInCoverage, emailed: 0, outOfCounty };
   }
 
   // Best-effort: scoring is already committed above, so a Resend/email failure
@@ -176,10 +215,10 @@ export async function runScoreAndDigest(): Promise<ScoreSummary> {
       throw new Error(`Digest sent but failed to record emailed state: ${markError.message}`);
     }
 
-    return { scored: listings.length, emailed: pendingEmail.length };
+    return { scored: scoredInCoverage, emailed: pendingEmail.length, outOfCounty };
   } catch (err) {
     const emailError = err instanceof Error ? err.message : String(err);
     console.error("Digest step failed (scoring already committed):", emailError);
-    return { scored: listings.length, emailed: 0, emailError };
+    return { scored: scoredInCoverage, emailed: 0, outOfCounty, emailError };
   }
 }
