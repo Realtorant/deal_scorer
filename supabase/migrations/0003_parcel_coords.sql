@@ -36,3 +36,14 @@ join parcel_coords pc on pc.parcel_number = ac.parcel_number
 where ac.price_per_sqft is not null
   and ac.livable_sqft is not null
   and ac.sale_date >= (current_date - interval '12 months');
+
+-- Comps in the window that still lack a coordinate — what the weekly coord
+-- refresh tops up (ordered so recent sales get coords first).
+create or replace view comps_missing_coords as
+select ac.parcel_number, ac.sale_date
+from assessor_comps ac
+left join parcel_coords pc on pc.parcel_number = ac.parcel_number
+where pc.parcel_number is null
+  and ac.price_per_sqft is not null
+  and ac.livable_sqft is not null
+  and ac.sale_date >= (current_date - interval '12 months');

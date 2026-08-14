@@ -84,26 +84,24 @@ Vercel cron then re-runs the same ingest to keep them fresh.
 ## 7. Parcel coordinates (for radius comps)
 
 Scoring picks comps by distance + size, not zip — it needs a lat/long for each
-comp parcel. Coords come from the Assessor's Parcel Points shapefile, joined by
-APN into the `parcel_coords` table (migration `0003`). Refresh them periodically
-(monthly is plenty — parcel centroids are static) with an offline Python job:
+comp parcel, stored in `parcel_coords` (migration `0003`), keyed by APN. Coords
+are pulled from a hosted Maricopa parcel feature service (centroid-by-APN
+queries). Seed it once, **after** the assessor backfill:
 
 ```bash
-python3 -m pip install pyshp pyproj
-python3 scripts/backfill_coords.py
+npm run backfill:coords
 ```
 
-Run it **after** the assessor backfill (it only fetches coords for parcels
-already in `assessor_comps`). Comps without coords fall back to the zip-level
-average until the next coord refresh. Subject coordinates come free from the
-Clozers feed and populate on the next scrape.
+After that it's automatic: the **weekly assessor cron tops up coordinates for
+newly-ingested parcels** (best-effort — if the feature service is unavailable,
+those parcels just use the zip fallback until the next run). Subject coordinates
+come free from the Clozers feed and populate on the next scrape. No manual step
+going forward.
 
 Comp selection ladder (first tier reaching `COMP_MIN_COUNT` wins, else zip-level):
 1 mi / ±15% sqft → 1.5 mi / ±15% → 1.5 mi / ±20% → zip average. Listings whose
-zip is outside Maricopa coverage are logged to `scored_listings`
-(`flag_reason = 'out of county…'`, never emailed) so multi-county expansion can
-be sized later:
-`select zip, count(*) from scored_listings where flag_reason like 'out of county%' group by zip;`
+zip is outside Maricopa coverage are filtered out of scoring and logged
+minimally (a one-line console log of the distinct zips in the score run).
 
 ## 8. Tuning
 

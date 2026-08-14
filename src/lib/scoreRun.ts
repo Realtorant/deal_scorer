@@ -12,9 +12,8 @@ type SupabaseClient = ReturnType<typeof getSupabaseClient>;
 export interface ScoreSummary {
   scored: number;
   emailed: number;
-  // Listings whose zip is outside Maricopa coverage: logged (as scored_listings
-  // rows with flag_reason) but not scored, so multi-county expansion can be sized
-  // later. Never emailed.
+  // Listings whose zip is outside Maricopa coverage: filtered out of scoring and
+  // logged minimally (a one-line console log of the distinct zips). Not stored.
   outOfCounty: number;
   // Set when the digest step failed. Scoring is already committed at that point,
   // so the run still succeeds — this just surfaces the delivery problem.
@@ -64,22 +63,6 @@ async function loadZipComps(
     }
   }
   return { byZip, maricopaZips };
-}
-
-function outOfCountyResult(listingId: string): ScoredListing {
-  return {
-    listing_id: listingId,
-    comp_source: null,
-    area_price_per_sqft: null,
-    list_price_per_sqft: null,
-    pct_below_area: null,
-    arv: null,
-    rehab_estimate: null,
-    margin_pct: null,
-    comp_count: null,
-    flagged: false,
-    flag_reason: "out of county (zip not in Maricopa coverage)",
-  };
 }
 
 /**
@@ -139,16 +122,17 @@ export async function runScoreAndDigest(): Promise<ScoreSummary> {
 
   const now = new Date().toISOString();
   const pendingEmail: { row: ScoredRow; digest: DigestRow; hash: string }[] = [];
-  let outOfCounty = 0;
+  const upsertRows: ScoredRow[] = [];
+  const outOfCountyZips = new Set<string>();
 
-  const upsertRows: ScoredRow[] = listings.map((listing) => {
-    const inCoverage = listing.zip !== null && zipData.maricopaZips.has(listing.zip);
-    if (!inCoverage) outOfCounty += 1;
+  for (const listing of listings) {
+    // Filter out (don't score, don't store) listings outside Maricopa coverage.
+    if (listing.zip === null || !zipData.maricopaZips.has(listing.zip)) {
+      if (listing.zip) outOfCountyZips.add(listing.zip);
+      continue;
+    }
 
-    const scored: ScoredListing = inCoverage
-      ? scoreListing(listing, comps, zipData.byZip.get(listing.zip as string) ?? null)
-      : outOfCountyResult(listing.listing_id);
-
+    const scored = scoreListing(listing, comps, zipData.byZip.get(listing.zip) ?? null);
     const hash = hashScoredListing(scored);
     const existing = existingByListingId.get(listing.listing_id);
 
@@ -178,18 +162,26 @@ export async function runScoreAndDigest(): Promise<ScoreSummary> {
       pendingEmail.push({ row, digest: { listing, scored }, hash });
     }
 
-    return row;
-  });
-
-  const { error: upsertError } = await supabase
-    .from("scored_listings")
-    .upsert(upsertRows, { onConflict: "listing_id" });
-
-  if (upsertError) {
-    throw new Error(`Failed to upsert scored_listings: ${upsertError.message}`);
+    upsertRows.push(row);
   }
 
-  const scoredInCoverage = listings.length - outOfCounty;
+  const outOfCounty = listings.length - upsertRows.length;
+  if (outOfCounty > 0) {
+    console.log(
+      `Skipped ${outOfCounty} out-of-county listing(s); zips: ${[...outOfCountyZips].sort().join(", ")}`
+    );
+  }
+
+  if (upsertRows.length > 0) {
+    const { error: upsertError } = await supabase
+      .from("scored_listings")
+      .upsert(upsertRows, { onConflict: "listing_id" });
+    if (upsertError) {
+      throw new Error(`Failed to upsert scored_listings: ${upsertError.message}`);
+    }
+  }
+
+  const scoredInCoverage = upsertRows.length;
 
   if (pendingEmail.length === 0) {
     return { scored: scoredInCoverage, emailed: 0, outOfCounty };

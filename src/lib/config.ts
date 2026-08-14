@@ -30,6 +30,12 @@ export const config = {
   // you change this, update supabase/migrations to match (see 0002).
   assessorLookbackMonths: envNumber("ASSESSOR_LOOKBACK_MONTHS", 12),
 
+  // Max parcels the weekly assessor cron tops up with coordinates per run
+  // (matches the parcel feature service's 2000 maxRecordCount). The weekly delta
+  // of new comps is far smaller; this only bounds a first run before the initial
+  // `npm run backfill:coords` seed.
+  coordMaxPerRun: envNumber("COORD_MAX_PER_RUN", 2000),
+
   // Clozers listings older than this (by scraped_at) are treated as stale/likely
   // sold and excluded from scoring, so they don't linger in the digest forever if
   // the scraper's own posted-within-7-days filter drops them from future scrapes.

@@ -13,6 +13,7 @@
     "test": "vitest run",
     "scrape:clozers": "tsx scripts/clozers-scrape.ts",
     "backfill:assessor": "tsx scripts/assessor-backfill.ts",
+    "backfill:coords": "tsx scripts/backfill-coords.ts",
     "score": "tsx scripts/score.ts"
   },
   "dependencies": {

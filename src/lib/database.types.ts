@@ -160,6 +160,13 @@ export interface Database {
         };
         Relationships: [];
       };
+      comps_missing_coords: {
+        Row: {
+          parcel_number: string | null;
+          sale_date: string | null;
+        };
+        Relationships: [];
+      };
     };
     Functions: Record<string, never>;
   };
