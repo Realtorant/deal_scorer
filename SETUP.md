@@ -24,11 +24,13 @@ real-time single-property checks:
 
 ## 3. Resend
 
-1. Create an account at resend.com, verify a sending domain (or use their
-   shared `onboarding@resend.dev` sender for testing).
-2. Create an API key, put it in `RESEND_API_KEY`.
-3. Set `DIGEST_TO_EMAIL` (defaults to anthony@antrealestateco.com in
-   `.env.example`) and optionally `DIGEST_FROM_EMAIL`.
+1. Create an account at resend.com and create an API key → `RESEND_API_KEY`.
+2. Verify the sending domain **antrealestateco.com** at resend.com/domains
+   (add the DNS records it gives you; wait for "Verified"). Until then, sends
+   only reach your own Resend account email, from `onboarding@resend.dev`.
+3. Set `DIGEST_FROM_EMAIL` to an address on the verified domain
+   (`"Deal Checker <deals@antrealestateco.com>"`) and `DIGEST_TO_EMAIL` to the
+   digest recipient (`almazan@thebrokery.com`). Set both in Vercel too.
 
 ## 4. Clozers scraper (`src/lib/clozers/fetchDeals.ts`)
 
