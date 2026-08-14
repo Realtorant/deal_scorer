@@ -11,6 +11,9 @@ type ScoredRow = Database["public"]["Tables"]["scored_listings"]["Insert"];
 export interface ScoreSummary {
   scored: number;
   emailed: number;
+  // Set when the digest step failed. Scoring is already committed at that point,
+  // so the run still succeeds — this just surfaces the delivery problem.
+  emailError?: string;
 }
 
 async function loadCompLookup(
@@ -153,22 +156,30 @@ export async function runScoreAndDigest(): Promise<ScoreSummary> {
     return { scored: listings.length, emailed: 0 };
   }
 
-  await sendDigest(pendingEmail.map((p) => p.digest));
+  // Best-effort: scoring is already committed above, so a Resend/email failure
+  // must never fail the whole run. Log it, surface it in the summary, return ok.
+  try {
+    await sendDigest(pendingEmail.map((p) => p.digest));
 
-  // Send succeeded — now advance the email state for exactly what went out.
-  const emailedAt = new Date().toISOString();
-  const emailedRows = pendingEmail.map((p) => ({
-    ...p.row,
-    emailed_at: emailedAt,
-    last_emailed_hash: p.hash,
-  }));
-  const { error: markError } = await supabase
-    .from("scored_listings")
-    .upsert(emailedRows, { onConflict: "listing_id" });
+    // Send succeeded — now advance the email state for exactly what went out.
+    const emailedAt = new Date().toISOString();
+    const emailedRows = pendingEmail.map((p) => ({
+      ...p.row,
+      emailed_at: emailedAt,
+      last_emailed_hash: p.hash,
+    }));
+    const { error: markError } = await supabase
+      .from("scored_listings")
+      .upsert(emailedRows, { onConflict: "listing_id" });
 
-  if (markError) {
-    throw new Error(`Digest sent but failed to record emailed state: ${markError.message}`);
+    if (markError) {
+      throw new Error(`Digest sent but failed to record emailed state: ${markError.message}`);
+    }
+
+    return { scored: listings.length, emailed: pendingEmail.length };
+  } catch (err) {
+    const emailError = err instanceof Error ? err.message : String(err);
+    console.error("Digest step failed (scoring already committed):", emailError);
+    return { scored: listings.length, emailed: 0, emailError };
   }
-
-  return { scored: listings.length, emailed: pendingEmail.length };
 }
