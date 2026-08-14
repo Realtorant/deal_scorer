@@ -30,9 +30,10 @@ export const config = {
   // you change this, update supabase/migrations to match (see 0002).
   assessorLookbackMonths: envNumber("ASSESSOR_LOOKBACK_MONTHS", 12),
 
-  // Max parcels the weekly assessor cron tops up with coordinates per run
-  // (matches the parcel feature service's 2000 maxRecordCount). The weekly delta
-  // of new comps is far smaller; this only bounds a first run before the initial
+  // Requested max parcels the weekly assessor cron tops up with coordinates per
+  // run. In practice a single call returns at most Supabase's own page-size cap
+  // (1000), regardless of this value — still far more than the weekly delta of
+  // new comps needs. This only bounds a first run before the initial
   // `npm run backfill:coords` seed.
   coordMaxPerRun: envNumber("COORD_MAX_PER_RUN", 2000),
 

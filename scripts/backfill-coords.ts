@@ -13,9 +13,11 @@ async function main() {
     const { missing, upserted } = await refreshParcelCoords(supabase, 2000);
     total += upserted;
     console.log(`batch: missing=${missing} upserted=${upserted} total=${total}`);
-    // Stop at the final (short) page, or when a full page resolved nothing —
-    // meaning what's left can't be resolved by the feature service right now.
-    if (missing < 2000 || upserted === 0) break;
+    // Stop when nothing is left, or when a batch resolved nothing — meaning
+    // what's left can't be resolved by the feature service right now. Note:
+    // Supabase's PostgREST caps a page at its server-side max-rows (1000) even
+    // though we ask for 2000, so `missing` alone can't signal "last page".
+    if (missing === 0 || upserted === 0) break;
   }
   console.log(`done: ${total} parcel_coords upserted`);
 }
