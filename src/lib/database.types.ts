@@ -89,6 +89,20 @@ export interface Database {
         Update: Partial<Database["public"]["Tables"]["parcel_coords"]["Insert"]>;
         Relationships: [];
       };
+      ingest_state: {
+        Row: {
+          key: string;
+          cursor: string | null;
+          updated_at: string;
+        };
+        Insert: {
+          key: string;
+          cursor?: string | null;
+          updated_at?: string;
+        };
+        Update: Partial<Database["public"]["Tables"]["ingest_state"]["Insert"]>;
+        Relationships: [];
+      };
       scored_listings: {
         Row: {
           id: number;

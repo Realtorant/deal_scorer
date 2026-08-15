@@ -30,6 +30,14 @@ export const config = {
   // you change this, update supabase/migrations to match (see 0002).
   assessorLookbackMonths: envNumber("ASSESSOR_LOOKBACK_MONTHS", 12),
 
+  // Soft time budget (ms) for the assessor comp upsert loop, measured from the
+  // start of ingestAssessorComps() (so it accounts for the file-parse time too,
+  // not just upserting). Leaves margin below the route's maxDuration=300s for
+  // the coord refresh + response that run after — if you raise maxDuration,
+  // raise this too. The loop stops gracefully and persists a resume cursor
+  // rather than getting hard-killed mid-chunk.
+  assessorIngestTimeBudgetMs: envNumber("ASSESSOR_INGEST_TIME_BUDGET_MS", 260_000),
+
   // Requested max parcels the weekly assessor cron tops up with coordinates per
   // run. In practice a single call returns at most Supabase's own page-size cap
   // (1000), regardless of this value — still far more than the weekly delta of
