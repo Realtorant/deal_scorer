@@ -67,8 +67,10 @@ async function loadZipComps(
 
 /**
  * Scores every active in-Maricopa Clozers listing against the radius comp ladder
- * (zip-level fallback), logs out-of-county listings, upserts the results, and
- * emails a digest of the newly-flagged-or-changed ones. Shared by the
+ * (zip-level fallback), logs out-of-county listings, and upserts the results.
+ * Always emails — a table of newly-flagged-or-changed listings if there are
+ * any, otherwise a "checked, no new deals" heartbeat — so an hourly quiet run
+ * is a clear liveness signal rather than silence to interpret. Shared by the
  * /api/cron/score route and the local `npm run score` script.
  */
 export async function runScoreAndDigest(): Promise<ScoreSummary> {
@@ -102,15 +104,14 @@ export async function runScoreAndDigest(): Promise<ScoreSummary> {
     long: row.long,
   }));
 
-  if (listings.length === 0) {
-    return { scored: 0, emailed: 0, outOfCounty: 0 };
-  }
-
+  // Falls through to the send-digest step below even when empty (rather than an
+  // early return) so a genuinely empty active-listings window still emails a
+  // heartbeat instead of going silent — arguably the case most worth catching.
   const listingIds = listings.map((l) => l.listing_id);
-  const { data: existingScores, error: existingError } = await supabase
-    .from("scored_listings")
-    .select("*")
-    .in("listing_id", listingIds);
+  const { data: existingScores, error: existingError } =
+    listingIds.length > 0
+      ? await supabase.from("scored_listings").select("*").in("listing_id", listingIds)
+      : { data: [], error: null };
 
   if (existingError) {
     throw new Error(`Failed to load existing scored_listings: ${existingError.message}`);
@@ -183,28 +184,30 @@ export async function runScoreAndDigest(): Promise<ScoreSummary> {
 
   const scoredInCoverage = upsertRows.length;
 
-  if (pendingEmail.length === 0) {
-    return { scored: scoredInCoverage, emailed: 0, outOfCounty };
-  }
-
-  // Best-effort: scoring is already committed above, so a Resend/email failure
-  // must never fail the whole run. Log it, surface it in the summary, return ok.
+  // Always send — a "0 new deals" run is itself a useful liveness signal, not
+  // silence to interpret. Best-effort: scoring is already committed above, so a
+  // Resend/email failure must never fail the whole run.
   try {
-    await sendDigest(pendingEmail.map((p) => p.digest));
+    await sendDigest(
+      pendingEmail.map((p) => p.digest),
+      { scoredCount: scoredInCoverage }
+    );
 
-    // Send succeeded — now advance the email state for exactly what went out.
-    const emailedAt = new Date().toISOString();
-    const emailedRows = pendingEmail.map((p) => ({
-      ...p.row,
-      emailed_at: emailedAt,
-      last_emailed_hash: p.hash,
-    }));
-    const { error: markError } = await supabase
-      .from("scored_listings")
-      .upsert(emailedRows, { onConflict: "listing_id" });
+    if (pendingEmail.length > 0) {
+      // Send succeeded — now advance the email state for exactly what went out.
+      const emailedAt = new Date().toISOString();
+      const emailedRows = pendingEmail.map((p) => ({
+        ...p.row,
+        emailed_at: emailedAt,
+        last_emailed_hash: p.hash,
+      }));
+      const { error: markError } = await supabase
+        .from("scored_listings")
+        .upsert(emailedRows, { onConflict: "listing_id" });
 
-    if (markError) {
-      throw new Error(`Digest sent but failed to record emailed state: ${markError.message}`);
+      if (markError) {
+        throw new Error(`Digest sent but failed to record emailed state: ${markError.message}`);
+      }
     }
 
     return { scored: scoredInCoverage, emailed: pendingEmail.length, outOfCounty };

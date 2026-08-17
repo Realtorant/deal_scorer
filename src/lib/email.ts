@@ -6,6 +6,12 @@ export interface DigestRow {
   scored: ScoredListing;
 }
 
+export interface DigestContext {
+  // Total in-coverage listings scored this run — included even on a quiet run
+  // so the email is a genuine liveness signal, not just a bare "nothing here".
+  scoredCount: number;
+}
+
 const currency = new Intl.NumberFormat("en-US", {
   style: "currency",
   currency: "USD",
@@ -24,7 +30,18 @@ function escapeHtml(value: string): string {
     .replace(/"/g, "&quot;");
 }
 
-export function buildDigestHtml(rows: DigestRow[]): string {
+export function buildDigestHtml(rows: DigestRow[], context: DigestContext): string {
+  if (rows.length === 0) {
+    const checkedAt = new Date().toUTCString();
+    return `
+      <div style="font-family: -apple-system, Helvetica, Arial, sans-serif;">
+        <h2>Deal Checker — checked, no new deals</h2>
+        <p>Checked at ${checkedAt}. Scored ${context.scoredCount} listing${
+          context.scoredCount === 1 ? "" : "s"
+        } this run; none met the flag threshold, or nothing changed since the last alert.</p>
+      </div>`;
+  }
+
   const tableRows = rows
     .map(({ listing, scored }) => {
       return `
@@ -62,21 +79,25 @@ export function buildDigestHtml(rows: DigestRow[]): string {
     </div>`;
 }
 
-export async function sendDigest(rows: DigestRow[]): Promise<void> {
-  if (rows.length === 0) return;
-
+/** Always sends — a quiet run is a liveness signal too, not silence to interpret. */
+export async function sendDigest(rows: DigestRow[], context: DigestContext): Promise<void> {
   const apiKey = process.env.RESEND_API_KEY;
   const to = process.env.DIGEST_TO_EMAIL;
   if (!apiKey || !to) {
     throw new Error("RESEND_API_KEY and DIGEST_TO_EMAIL must be set to send the digest.");
   }
 
+  const subject =
+    rows.length === 0
+      ? `Deal Checker: checked, no new deals (${context.scoredCount} scored)`
+      : `Deal Checker: ${rows.length} flagged listing${rows.length === 1 ? "" : "s"}`;
+
   const resend = new Resend(apiKey);
   const { error } = await resend.emails.send({
     from: process.env.DIGEST_FROM_EMAIL || "Deal Checker <onboarding@resend.dev>",
     to,
-    subject: `Deal Checker: ${rows.length} flagged listing${rows.length === 1 ? "" : "s"}`,
-    html: buildDigestHtml(rows),
+    subject,
+    html: buildDigestHtml(rows, context),
   });
 
   if (error) {
