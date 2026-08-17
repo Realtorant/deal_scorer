@@ -94,6 +94,16 @@ export async function runScoreAndDigest(): Promise<ScoreSummary> {
 }
 
 async function scoreAndDigest(): Promise<ScoreSummary> {
+  // Fail fast and loud here (via the outer wrapper's alert + a real 500)
+  // instead of letting a missing config surface only inside the digest step's
+  // best-effort catch below, where it would be silently absorbed into an
+  // emailError field nobody's reading while the route reports a false 200.
+  if (!process.env.RESEND_API_KEY || !process.env.DIGEST_TO_EMAIL) {
+    throw new Error(
+      "RESEND_API_KEY and/or DIGEST_TO_EMAIL are not set in this environment — cannot email the digest."
+    );
+  }
+
   const supabase = getSupabaseClient();
 
   const sinceScrapedAt = new Date();
