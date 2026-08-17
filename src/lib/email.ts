@@ -30,6 +30,37 @@ function escapeHtml(value: string): string {
     .replace(/"/g, "&quot;");
 }
 
+function getResendConfig() {
+  const apiKey = process.env.RESEND_API_KEY;
+  const to = process.env.DIGEST_TO_EMAIL;
+  if (!apiKey || !to) {
+    throw new Error("RESEND_API_KEY and DIGEST_TO_EMAIL must be set to send email.");
+  }
+  return {
+    resend: new Resend(apiKey),
+    from: process.env.DIGEST_FROM_EMAIL || "Deal Checker <onboarding@resend.dev>",
+    to,
+  };
+}
+
+// A transient Resend blip is the one failure mode with no fallback channel
+// (the alert channel IS Resend), so it's worth one retry before giving up.
+async function sendWithRetry(params: {
+  resend: Resend;
+  from: string;
+  to: string;
+  subject: string;
+  html: string;
+}): Promise<void> {
+  const { resend, ...email } = params;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const { error } = await resend.emails.send(email);
+    if (!error) return;
+    if (attempt === 1) throw new Error(`Resend send failed: ${error.message}`);
+    await new Promise((resolve) => setTimeout(resolve, 1500));
+  }
+}
+
 export function buildDigestHtml(rows: DigestRow[], context: DigestContext): string {
   if (rows.length === 0) {
     const checkedAt = new Date().toUTCString();
@@ -81,26 +112,30 @@ export function buildDigestHtml(rows: DigestRow[], context: DigestContext): stri
 
 /** Always sends — a quiet run is a liveness signal too, not silence to interpret. */
 export async function sendDigest(rows: DigestRow[], context: DigestContext): Promise<void> {
-  const apiKey = process.env.RESEND_API_KEY;
-  const to = process.env.DIGEST_TO_EMAIL;
-  if (!apiKey || !to) {
-    throw new Error("RESEND_API_KEY and DIGEST_TO_EMAIL must be set to send the digest.");
-  }
-
+  const { resend, from, to } = getResendConfig();
   const subject =
     rows.length === 0
       ? `Deal Checker: checked, no new deals (${context.scoredCount} scored)`
       : `Deal Checker: ${rows.length} flagged listing${rows.length === 1 ? "" : "s"}`;
 
-  const resend = new Resend(apiKey);
-  const { error } = await resend.emails.send({
-    from: process.env.DIGEST_FROM_EMAIL || "Deal Checker <onboarding@resend.dev>",
-    to,
-    subject,
-    html: buildDigestHtml(rows, context),
-  });
+  await sendWithRetry({ resend, from, to, subject, html: buildDigestHtml(rows, context) });
+}
 
-  if (error) {
-    throw new Error(`Resend send failed: ${error.message}`);
-  }
+/**
+ * Alerts on a run that failed before it could even reach the digest step (e.g.
+ * a Supabase read/write error). The one failure mode this can't cover is Resend
+ * itself being down — there's no fallback channel for that, so scoreRun just
+ * logs it to the function's console output instead.
+ */
+export async function sendFailureAlert(errorMessage: string): Promise<void> {
+  const { resend, from, to } = getResendConfig();
+  const checkedAt = new Date().toUTCString();
+  const html = `
+    <div style="font-family: -apple-system, Helvetica, Arial, sans-serif;">
+      <h2 style="color:#b00020;">Deal Checker — run failed</h2>
+      <p>Failed at ${checkedAt}, before scoring/digest could complete.</p>
+      <pre style="white-space: pre-wrap; background:#f5f5f5; padding:12px; border-radius:4px;">${escapeHtml(errorMessage)}</pre>
+    </div>`;
+
+  await sendWithRetry({ resend, from, to, subject: "Deal Checker: run FAILED", html });
 }

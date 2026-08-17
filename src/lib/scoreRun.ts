@@ -1,6 +1,6 @@
 import { config } from "./config";
 import type { Database } from "./database.types";
-import { sendDigest, type DigestRow } from "./email";
+import { sendDigest, sendFailureAlert, type DigestRow } from "./email";
 import { hashScoredListing } from "./scoreHash";
 import { scoreListing } from "./scoring";
 import { getSupabaseClient } from "./supabase";
@@ -72,8 +72,28 @@ async function loadZipComps(
  * any, otherwise a "checked, no new deals" heartbeat — so an hourly quiet run
  * is a clear liveness signal rather than silence to interpret. Shared by the
  * /api/cron/score route and the local `npm run score` script.
+ *
+ * A failure anywhere in the pipeline (not just the digest step) triggers a
+ * best-effort "run FAILED" alert email before re-throwing, so a broken run is
+ * never just a silent 500 — the one exception is Resend itself being down,
+ * which has no fallback channel and just logs to the function's console.
  */
 export async function runScoreAndDigest(): Promise<ScoreSummary> {
+  try {
+    return await scoreAndDigest();
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error("Score run failed before the digest step:", message);
+    try {
+      await sendFailureAlert(message);
+    } catch (alertErr) {
+      console.error("Also failed to send the failure alert email:", alertErr);
+    }
+    throw err;
+  }
+}
+
+async function scoreAndDigest(): Promise<ScoreSummary> {
   const supabase = getSupabaseClient();
 
   const sinceScrapedAt = new Date();
