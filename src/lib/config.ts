@@ -55,4 +55,13 @@ export const config = {
   // sourcing criteria; change them if the target search criteria change.
   clozersMinBeds: envNumber("CLOZERS_MIN_BEDS", 2),
   clozersPostedWithinDays: envNumber("CLOZERS_POSTED_WITHIN_DAYS", 7),
+
+  // Digest emails (both real and "checked, no new deals" heartbeats) only send
+  // within this Arizona-local hour window, every day of the week. Scoring still
+  // runs hourly regardless — this only gates the send step. Outside the window,
+  // newly-flagged/changed listings stay unmarked (not "emailed") and roll into
+  // the next in-window run instead of being dropped. End is exclusive: the
+  // default 8-18 means the last send of the day is the 17:xx run, not 18:xx.
+  digestSendWindowStartHour: envNumber("DIGEST_SEND_WINDOW_START_HOUR", 8),
+  digestSendWindowEndHour: envNumber("DIGEST_SEND_WINDOW_END_HOUR", 18),
 };

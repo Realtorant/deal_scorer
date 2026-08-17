@@ -120,7 +120,7 @@ export interface Database {
           first_scored_at: string;
           last_scored_at: string;
           emailed_at: string | null;
-          last_emailed_hash: string | null;
+          last_emailed_price: number | null;
         };
         Insert: {
           id?: number;
@@ -138,7 +138,7 @@ export interface Database {
           first_scored_at?: string;
           last_scored_at?: string;
           emailed_at?: string | null;
-          last_emailed_hash?: string | null;
+          last_emailed_price?: number | null;
         };
         Update: Partial<Database["public"]["Tables"]["scored_listings"]["Insert"]>;
         Relationships: [];

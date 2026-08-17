@@ -61,6 +61,44 @@ async function sendWithRetry(params: {
   }
 }
 
+// Ranking for the "top picks" highlight and the full list's order: margin %
+// is the single most decision-relevant number here — it already folds ARV,
+// rehab cost, and list price together into one bottom-line profitability
+// figure, unlike pct_below_area which is just a raw pricing signal. Every
+// flagged row has a non-null margin_pct (scoring only flags a listing once it
+// has a valid area comp), so this sort never has to handle nulls in practice.
+function byMarginDesc(a: DigestRow, b: DigestRow): number {
+  return (b.scored.margin_pct ?? -Infinity) - (a.scored.margin_pct ?? -Infinity);
+}
+
+function digestRowHtml({ listing, scored }: DigestRow): string {
+  return `
+        <tr>
+          <td><a href="${escapeHtml(listing.url)}">${escapeHtml(listing.address)}</a></td>
+          <td>${money(listing.price)}</td>
+          <td>${perSqft(scored.list_price_per_sqft)} vs ${perSqft(scored.area_price_per_sqft)}</td>
+          <td>${money(scored.arv)}</td>
+          <td>${money(scored.rehab_estimate)}</td>
+          <td>${pct(scored.margin_pct)}</td>
+          <td>${scored.comp_count ?? "—"} (${scored.comp_source ?? "n/a"})</td>
+          <td>${escapeHtml(scored.flag_reason ?? "")}</td>
+        </tr>`;
+}
+
+function topPickCardHtml({ listing, scored }: DigestRow, rank: number): string {
+  return `
+      <div style="border:1px solid #ddd; border-left:4px solid #2e7d32; border-radius:4px; padding:12px 16px; margin-bottom:10px;">
+        <div style="font-weight:bold; font-size:1.05em;">
+          #${rank} — <a href="${escapeHtml(listing.url)}">${escapeHtml(listing.address)}</a>
+        </div>
+        <div style="color:#333; margin-top:4px;">
+          ${money(listing.price)} · Margin ${pct(scored.margin_pct)} ·
+          ${perSqft(scored.list_price_per_sqft)} vs area ${perSqft(scored.area_price_per_sqft)}
+        </div>
+        <div style="color:#666; font-size:0.9em; margin-top:2px;">${escapeHtml(scored.flag_reason ?? "")}</div>
+      </div>`;
+}
+
 export function buildDigestHtml(rows: DigestRow[], context: DigestContext): string {
   if (rows.length === 0) {
     const checkedAt = new Date().toUTCString();
@@ -73,25 +111,22 @@ export function buildDigestHtml(rows: DigestRow[], context: DigestContext): stri
       </div>`;
   }
 
-  const tableRows = rows
-    .map(({ listing, scored }) => {
-      return `
-        <tr>
-          <td><a href="${escapeHtml(listing.url)}">${escapeHtml(listing.address)}</a></td>
-          <td>${money(listing.price)}</td>
-          <td>${perSqft(scored.list_price_per_sqft)} vs ${perSqft(scored.area_price_per_sqft)}</td>
-          <td>${money(scored.arv)}</td>
-          <td>${money(scored.rehab_estimate)}</td>
-          <td>${pct(scored.margin_pct)}</td>
-          <td>${scored.comp_count ?? "—"} (${scored.comp_source ?? "n/a"})</td>
-          <td>${escapeHtml(scored.flag_reason ?? "")}</td>
-        </tr>`;
-    })
-    .join("");
+  const ranked = [...rows].sort(byMarginDesc);
+  const topPicks = ranked.slice(0, 3);
+  const topPicksHtml =
+    topPicks.length > 0
+      ? `
+      <h3 style="margin-bottom:8px;">🏆 Top ${topPicks.length} by margin</h3>
+      ${topPicks.map((row, i) => topPickCardHtml(row, i + 1)).join("")}
+      <hr style="margin:20px 0; border:none; border-top:1px solid #ddd;" />`
+      : "";
+
+  const tableRows = ranked.map(digestRowHtml).join("");
 
   return `
     <div style="font-family: -apple-system, Helvetica, Arial, sans-serif;">
       <h2>Deal Checker — ${rows.length} new/changed flagged listing${rows.length === 1 ? "" : "s"}</h2>
+      ${topPicksHtml}
       <table cellpadding="8" style="border-collapse: collapse; width: 100%;" border="1">
         <thead>
           <tr>

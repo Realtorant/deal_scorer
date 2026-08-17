@@ -1,10 +1,9 @@
 import { config } from "./config";
 import type { Database } from "./database.types";
 import { sendDigest, sendFailureAlert, type DigestRow } from "./email";
-import { hashScoredListing } from "./scoreHash";
 import { scoreListing } from "./scoring";
 import { getSupabaseClient } from "./supabase";
-import type { AreaComp, ClozersListing, Comp, ScoredListing } from "./types";
+import type { AreaComp, ClozersListing, Comp } from "./types";
 
 type ScoredRow = Database["public"]["Tables"]["scored_listings"]["Insert"];
 type SupabaseClient = ReturnType<typeof getSupabaseClient>;
@@ -15,9 +14,28 @@ export interface ScoreSummary {
   // Listings whose zip is outside Maricopa coverage: filtered out of scoring and
   // logged minimally (a one-line console log of the distinct zips). Not stored.
   outOfCounty: number;
+  // True when there was something to send (a digest or a heartbeat) but it was
+  // held back for being outside the work-hours window. Scoring/upserting still
+  // happened as normal; the held listings stay unmarked and roll into the next
+  // in-window run.
+  sendSuppressed?: boolean;
   // Set when the digest step failed. Scoring is already committed at that point,
   // so the run still succeeds — this just surfaces the delivery problem.
   emailError?: string;
+}
+
+const ARIZONA_TZ = "America/Phoenix"; // fixed UTC-7, no DST, so this is always correct
+
+/** True when `date` falls within the configured Arizona-local send window. */
+function isWithinSendWindow(date: Date): boolean {
+  const hour = Number(
+    new Intl.DateTimeFormat("en-US", {
+      timeZone: ARIZONA_TZ,
+      hour: "numeric",
+      hour12: false,
+    }).format(date)
+  );
+  return hour >= config.digestSendWindowStartHour && hour < config.digestSendWindowEndHour;
 }
 
 /** The radius comp pool (last-12mo SFR sales with coords), paged in full. */
@@ -68,10 +86,11 @@ async function loadZipComps(
 /**
  * Scores every active in-Maricopa Clozers listing against the radius comp ladder
  * (zip-level fallback), logs out-of-county listings, and upserts the results.
- * Always emails — a table of newly-flagged-or-changed listings if there are
- * any, otherwise a "checked, no new deals" heartbeat — so an hourly quiet run
- * is a clear liveness signal rather than silence to interpret. Shared by the
- * /api/cron/score route and the local `npm run score` script.
+ * Always emails within the work-hours window — a table of newly-flagged-or-
+ * changed listings if there are any, otherwise a "checked, no new deals"
+ * heartbeat — so a quiet run is a clear liveness signal rather than silence to
+ * interpret. Shared by the /api/cron/score route and the local `npm run score`
+ * script.
  *
  * A failure anywhere in the pipeline (not just the digest step) triggers a
  * best-effort "run FAILED" alert email before re-throwing, so a broken run is
@@ -152,7 +171,7 @@ async function scoreAndDigest(): Promise<ScoreSummary> {
   );
 
   const now = new Date().toISOString();
-  const pendingEmail: { row: ScoredRow; digest: DigestRow; hash: string }[] = [];
+  const pendingEmail: { row: ScoredRow; digest: DigestRow }[] = [];
   const upsertRows: ScoredRow[] = [];
   const outOfCountyZips = new Set<string>();
 
@@ -164,7 +183,6 @@ async function scoreAndDigest(): Promise<ScoreSummary> {
     }
 
     const scored = scoreListing(listing, comps, zipData.byZip.get(listing.zip) ?? null);
-    const hash = hashScoredListing(scored);
     const existing = existingByListingId.get(listing.listing_id);
 
     const row: ScoredRow = {
@@ -182,15 +200,21 @@ async function scoreAndDigest(): Promise<ScoreSummary> {
       first_scored_at: existing?.first_scored_at ?? now,
       last_scored_at: now,
       // Preserve prior email state here; it only advances *after* a successful
-      // send below, so a failed send never silently marks a listing as emailed.
+      // send below, so a failed (or held-for-window) send never silently marks
+      // a listing as emailed.
       emailed_at: existing?.emailed_at ?? null,
-      last_emailed_hash: existing?.last_emailed_hash ?? null,
+      last_emailed_price: existing?.last_emailed_price ?? null,
     };
 
+    // Dedup keys off the LISTING's own price, not derived scoring fields
+    // (margin_pct/arv/etc. drift on their own as the comp pool changes week to
+    // week — hashing those caused spurious re-sends of listings that hadn't
+    // actually changed). A listing is only ever re-emailed if its price has
+    // materially changed since the last successful send.
     const shouldEmail =
-      scored.flagged && (!existing?.emailed_at || existing.last_emailed_hash !== hash);
+      scored.flagged && (!existing?.emailed_at || existing.last_emailed_price !== listing.price);
     if (shouldEmail) {
-      pendingEmail.push({ row, digest: { listing, scored }, hash });
+      pendingEmail.push({ row, digest: { listing, scored } });
     }
 
     upsertRows.push(row);
@@ -214,6 +238,19 @@ async function scoreAndDigest(): Promise<ScoreSummary> {
 
   const scoredInCoverage = upsertRows.length;
 
+  // Scoring/upserting always happens on schedule; only the send itself is
+  // gated to work hours. Listings held back here stay unmarked (emailed_at
+  // untouched above) so they roll into the next in-window run's pendingEmail
+  // automatically — no separate batching state needed.
+  if (!isWithinSendWindow(new Date())) {
+    if (pendingEmail.length > 0) {
+      console.log(
+        `Outside the ${config.digestSendWindowStartHour}:00-${config.digestSendWindowEndHour}:00 AZ send window — holding ${pendingEmail.length} pending listing(s) for the next in-window run.`
+      );
+    }
+    return { scored: scoredInCoverage, emailed: 0, outOfCounty, sendSuppressed: true };
+  }
+
   // Always send — a "0 new deals" run is itself a useful liveness signal, not
   // silence to interpret. Best-effort: scoring is already committed above, so a
   // Resend/email failure must never fail the whole run.
@@ -229,7 +266,7 @@ async function scoreAndDigest(): Promise<ScoreSummary> {
       const emailedRows = pendingEmail.map((p) => ({
         ...p.row,
         emailed_at: emailedAt,
-        last_emailed_hash: p.hash,
+        last_emailed_price: p.digest.listing.price,
       }));
       const { error: markError } = await supabase
         .from("scored_listings")
