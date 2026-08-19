@@ -10,8 +10,8 @@ export interface PacketSoldComp {
 }
 
 export interface PacketScenario {
-  label: "FLOOR" | "TARGET";
-  headline: string; // e.g. "$1.5M ARV · Conservative"
+  label: "TARGET";
+  headline: string; // e.g. "$394K ARV"
   arv: number;
   rehab: number;
   purchase: number;
@@ -41,7 +41,6 @@ export interface CompPacketData {
     compCount: number;
   };
   scenarios: {
-    floor: PacketScenario;
     target: PacketScenario;
   };
   calloutText: string;

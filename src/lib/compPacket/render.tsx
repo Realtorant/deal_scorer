@@ -69,7 +69,7 @@ function Headline({ data }: { data: CompPacketData }) {
       </Text>
       <Text style={{ fontSize: 9.5, color: COLORS.muted, marginTop: 3 }}>
         {statBand.compCount} sold comp{statBand.compCount === 1 ? "" : "s"} supporting the{" "}
-        {moneyCompact(data.scenarios.floor.arv)}–{moneyCompact(data.scenarios.target.arv)} ARV range
+        {moneyCompact(data.scenarios.target.arv)} ARV estimate
       </Text>
     </View>
   );
@@ -222,7 +222,7 @@ function ScenarioCard({ scenario }: { scenario: PacketScenario }) {
   return (
     <View
       style={{
-        width: "48%",
+        width: "100%",
         borderWidth: 1,
         borderColor: COLORS.border,
         borderRadius: 3,
@@ -247,7 +247,9 @@ function ScenarioCard({ scenario }: { scenario: PacketScenario }) {
           </Text>
         </View>
       </View>
-      <View style={{ marginTop: 10 }}>
+      {/* Constrained to a fixed width so label/value pairs stay close together
+          rather than stretching across the whole (now full-width) card. */}
+      <View style={{ marginTop: 10, width: 320 }}>
         {rows.map((r) => (
           <View key={r.label}>
             {r.rule && <View style={{ borderBottomWidth: 0.5, borderBottomColor: COLORS.border, marginVertical: 5 }} />}
@@ -316,8 +318,7 @@ export function CompPacketDocument({ data }: { data: CompPacketData }) {
         <Headline data={data} />
         <SoldCompsTable comps={data.soldComps} totalCompCount={data.statBand.compCount} />
         <StatBand data={data} />
-        <View style={[s.spaceBetween, { marginTop: 16 }]}>
-          <ScenarioCard scenario={data.scenarios.floor} />
+        <View style={{ marginTop: 16 }}>
           <ScenarioCard scenario={data.scenarios.target} />
         </View>
         <CalloutBox data={data} />

@@ -21,17 +21,12 @@ function extractAffidavitAddress(raw: unknown): string | null {
   return parts.length > 0 ? parts.join(", ") : null;
 }
 
-function buildScenario(
-  label: "FLOOR" | "TARGET",
-  arv: number,
-  purchase: number,
-  rehab: number
-): PacketScenario {
+function buildScenario(arv: number, purchase: number, rehab: number): PacketScenario {
   const profit = arv - purchase - rehab;
   const marginPct = arv > 0 ? profit / arv : 0;
   return {
-    label,
-    headline: `${moneyCompact(arv)} ARV · ${label === "FLOOR" ? "Conservative" : "Base Case"}`,
+    label: "TARGET",
+    headline: `${moneyCompact(arv)} ARV`,
     arv,
     rehab,
     purchase,
@@ -225,9 +220,7 @@ export async function buildCompPacketData(listingId: string): Promise<CompPacket
   const marginPct = scored.margin_pct ?? (arv - listing.price - rehab) / arv;
   const pctBelowArea = scored.pct_below_area ?? (areaPricePerSqft - listPricePerSqft) / areaPricePerSqft;
 
-  const floorArv = arv * (1 - config.arvFloorDiscountPct);
-  const target = buildScenario("TARGET", arv, listing.price, rehab);
-  const floor = buildScenario("FLOOR", floorArv, listing.price, rehab);
+  const target = buildScenario(arv, listing.price, rehab);
 
   const calloutText = buildCallout({
     compSource,
@@ -263,7 +256,7 @@ export async function buildCompPacketData(listingId: string): Promise<CompPacket
       marginPct,
       compCount,
     },
-    scenarios: { floor, target },
+    scenarios: { target },
     calloutText,
   };
 }
