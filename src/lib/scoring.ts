@@ -36,12 +36,18 @@ export interface CompSubject {
   sqft: number | null;
 }
 
+interface LadderMatch {
+  tier: (typeof COMP_LADDER)[number];
+  matched: Comp[];
+}
+
 /**
- * Walks the ladder and returns the first tier's radius comp (avg $/sqft over the
- * qualifying comps) that meets the minimum count, or null if none does. Uses a
- * bounding-box prefilter so it stays cheap over the full county comp pool.
+ * Shared core of the ladder walk: finds the first tier meeting the comp
+ * minimum and returns which tier won plus exactly which comps qualified.
+ * selectRadiusComp() and selectRadiusCompDetails() both build on this so
+ * there's one implementation of the ladder logic, not two that could drift.
  */
-export function selectRadiusComp(subject: CompSubject, comps: Comp[]): AreaComp | null {
+function findWinningTier(subject: CompSubject, comps: Comp[]): LadderMatch | null {
   const { lat, long, sqft } = subject;
   if (lat === null || long === null || !sqft || sqft <= 0) return null;
 
@@ -63,18 +69,64 @@ export function selectRadiusComp(subject: CompSubject, comps: Comp[]): AreaComp 
       (n) => n.dist <= tier.radiusMi && n.comp.sqft >= lo && n.comp.sqft <= hi
     );
     if (selected.length >= config.compMinCount) {
-      const avg =
-        selected.reduce((s, n) => s + n.comp.pricePerSqft, 0) / selected.length;
-      return {
-        source: "radius",
-        key: tier.label,
-        avgPricePerSqft: avg,
-        compCount: selected.length,
-      };
+      return { tier, matched: selected.map((n) => n.comp) };
     }
   }
 
   return null;
+}
+
+function averagePricePerSqft(comps: Comp[]): number {
+  return comps.reduce((s, c) => s + c.pricePerSqft, 0) / comps.length;
+}
+
+/**
+ * Walks the ladder and returns the first tier's radius comp (avg $/sqft over the
+ * qualifying comps) that meets the minimum count, or null if none does. Uses a
+ * bounding-box prefilter so it stays cheap over the full county comp pool.
+ */
+export function selectRadiusComp(subject: CompSubject, comps: Comp[]): AreaComp | null {
+  const match = findWinningTier(subject, comps);
+  if (!match) return null;
+  return {
+    source: "radius",
+    key: match.tier.label,
+    avgPricePerSqft: averagePricePerSqft(match.matched),
+    compCount: match.matched.length,
+  };
+}
+
+export interface RadiusCompDetails {
+  areaComp: AreaComp;
+  matchedComps: Comp[];
+  tierLabel: string;
+  radiusMi: number;
+  sqftPct: number;
+}
+
+/**
+ * Same ladder walk as selectRadiusComp, but also returns which individual
+ * comps matched the winning tier — used by the comp packet generator to
+ * render an actual sold-comps table, not just the aggregate.
+ */
+export function selectRadiusCompDetails(
+  subject: CompSubject,
+  comps: Comp[]
+): RadiusCompDetails | null {
+  const match = findWinningTier(subject, comps);
+  if (!match) return null;
+  return {
+    areaComp: {
+      source: "radius",
+      key: match.tier.label,
+      avgPricePerSqft: averagePricePerSqft(match.matched),
+      compCount: match.matched.length,
+    },
+    matchedComps: match.matched,
+    tierLabel: match.tier.label,
+    radiusMi: match.tier.radiusMi,
+    sqftPct: match.tier.sqftPct,
+  };
 }
 
 /**

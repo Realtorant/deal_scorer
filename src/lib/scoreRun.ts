@@ -6,7 +6,7 @@ import { getSupabaseClient } from "./supabase";
 import type { AreaComp, ClozersListing, Comp } from "./types";
 
 type ScoredRow = Database["public"]["Tables"]["scored_listings"]["Insert"];
-type SupabaseClient = ReturnType<typeof getSupabaseClient>;
+export type SupabaseClient = ReturnType<typeof getSupabaseClient>;
 
 export interface ScoreSummary {
   scored: number;
@@ -39,20 +39,32 @@ function isWithinSendWindow(date: Date): boolean {
 }
 
 /** The radius comp pool (last-12mo SFR sales with coords), paged in full. */
-async function loadComps(supabase: SupabaseClient): Promise<Comp[]> {
+export async function loadComps(supabase: SupabaseClient): Promise<Comp[]> {
   const comps: Comp[] = [];
   const PAGE = 1000;
   for (let offset = 0; ; offset += PAGE) {
     const { data, error } = await supabase
       .from("comps_with_coords")
-      .select("lat,long,livable_sqft,price_per_sqft")
+      .select("parcel_number,lat,long,livable_sqft,price_per_sqft")
       .range(offset, offset + PAGE - 1);
     if (error) throw new Error(`Failed to load comps_with_coords: ${error.message}`);
     if (!data || data.length === 0) break;
     for (const r of data) {
-      if (r.lat === null || r.long === null || r.livable_sqft === null || r.price_per_sqft === null)
+      if (
+        r.parcel_number === null ||
+        r.lat === null ||
+        r.long === null ||
+        r.livable_sqft === null ||
+        r.price_per_sqft === null
+      )
         continue;
-      comps.push({ lat: r.lat, long: r.long, sqft: r.livable_sqft, pricePerSqft: r.price_per_sqft });
+      comps.push({
+        parcelNumber: r.parcel_number,
+        lat: r.lat,
+        long: r.long,
+        sqft: r.livable_sqft,
+        pricePerSqft: r.price_per_sqft,
+      });
     }
     if (data.length < PAGE) break;
   }
@@ -60,7 +72,7 @@ async function loadComps(supabase: SupabaseClient): Promise<Comp[]> {
 }
 
 /** Zip-level fallback averages + the set of zips we consider "in coverage". */
-async function loadZipComps(
+export async function loadZipComps(
   supabase: SupabaseClient
 ): Promise<{ byZip: Map<string, AreaComp>; maricopaZips: Set<string> }> {
   const { data, error } = await supabase.from("comp_averages_by_zip").select("*");

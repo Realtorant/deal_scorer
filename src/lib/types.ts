@@ -19,6 +19,7 @@ export interface AreaComp {
 
 // A single comp with coordinates, as loaded from the comps_with_coords view.
 export interface Comp {
+  parcelNumber: string;
   lat: number;
   long: number;
   sqft: number;

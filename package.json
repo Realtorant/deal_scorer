@@ -14,9 +14,11 @@
     "scrape:clozers": "tsx scripts/clozers-scrape.ts",
     "backfill:assessor": "tsx scripts/assessor-backfill.ts",
     "backfill:coords": "tsx scripts/backfill-coords.ts",
-    "score": "tsx scripts/score.ts"
+    "score": "tsx scripts/score.ts",
+    "comp-packet": "tsx scripts/comp-packet.ts"
   },
   "dependencies": {
+    "@react-pdf/renderer": "^4.6.1",
     "@supabase/supabase-js": "^2.45.4",
     "next": "14.2.35",
     "react": "^18.3.1",

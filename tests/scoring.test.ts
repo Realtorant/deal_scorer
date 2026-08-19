@@ -10,9 +10,16 @@ import type { AreaComp, ClozersListing, Comp } from "../src/lib/types";
 const SUBJ = { lat: 33.45, long: -112.07, sqft: 1500 };
 
 // Build a comp offset from the subject by ~`miles` east, with given sqft.
+let nextParcelNumber = 1;
 function compAt(milesEast: number, sqft: number, ppsf: number): Comp {
   const dLong = milesEast / (69 * Math.cos((SUBJ.lat * Math.PI) / 180));
-  return { lat: SUBJ.lat, long: SUBJ.long + dLong, sqft, pricePerSqft: ppsf };
+  return {
+    parcelNumber: String(nextParcelNumber++),
+    lat: SUBJ.lat,
+    long: SUBJ.long + dLong,
+    sqft,
+    pricePerSqft: ppsf,
+  };
 }
 
 function listing(overrides: Partial<ClozersListing> = {}): ClozersListing {

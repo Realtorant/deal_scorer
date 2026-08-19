@@ -18,6 +18,11 @@ export const config = {
   // A listing is flagged if its list $/sqft is this far below the area average.
   belowAvgThreshold: envNumber("BELOW_AVG_THRESHOLD", 0.12),
 
+  // PLACEHOLDER — no data-backed basis yet, just a round conservative haircut.
+  // The comp packet's Floor scenario discounts the Target ARV (the same
+  // scored.arv used everywhere else) by this fraction to give a downside case.
+  arvFloorDiscountPct: envNumber("ARV_FLOOR_DISCOUNT_PCT", 0.07),
+
   // Minimum comps a radius-ladder tier must find to be accepted. If no tier
   // (see COMP_LADDER in scoring.ts) reaches this, scoring falls back to the
   // zip-level average. Validated at 5 against real data (see the comp-radius
