@@ -269,7 +269,7 @@ async function scoreAndDigest(): Promise<ScoreSummary> {
   try {
     await sendDigest(
       pendingEmail.map((p) => p.digest),
-      { scoredCount: scoredInCoverage }
+      { scoredCount: scoredInCoverage, appBaseUrl: config.appBaseUrl }
     );
 
     if (pendingEmail.length > 0) {

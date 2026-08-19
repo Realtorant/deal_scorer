@@ -64,4 +64,10 @@ export const config = {
   // default 8-18 means the last send of the day is the 17:xx run, not 18:xx.
   digestSendWindowStartHour: envNumber("DIGEST_SEND_WINDOW_START_HOUR", 8),
   digestSendWindowEndHour: envNumber("DIGEST_SEND_WINDOW_END_HOUR", 18),
+
+  // The deployed app's own public URL (e.g. https://deal-checker.vercel.app),
+  // used to build the "Generate Comp Packet" links embedded in the digest
+  // email. No default — a wrong guess here would silently ship broken links,
+  // so when unset the digest just omits the packet links instead (see email.ts).
+  appBaseUrl: process.env.APP_BASE_URL || null,
 };

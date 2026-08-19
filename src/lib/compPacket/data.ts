@@ -1,9 +1,79 @@
 import { config } from "../config";
-import { loadComps, loadZipComps } from "../scoreRun";
-import { haversineMiles, selectRadiusCompDetails } from "../scoring";
+import type { SupabaseClient } from "../scoreRun";
+import { COMP_LADDER, haversineMiles, selectRadiusCompDetails } from "../scoring";
 import { getSupabaseClient } from "../supabase";
+import type { AreaComp, Comp } from "../types";
 import type { CompPacketData, PacketScenario, PacketSoldComp } from "./types";
 import { money, moneyCompact, pct1 } from "./format";
+
+const MAX_LADDER_RADIUS_MI = Math.max(...COMP_LADDER.map((t) => t.radiusMi));
+
+/**
+ * Comps within a bounding box around one subject, queried server-side —
+ * unlike scoreRun's loadComps() (which pages the entire county pool for a
+ * batch scoring run), this route only ever scores one listing, so fetching
+ * just the nearby slice keeps an on-demand, someone's-waiting-in-a-browser
+ * request fast instead of dragging in ~40k+ unrelated rows.
+ */
+async function loadNearbyComps(
+  supabase: SupabaseClient,
+  lat: number,
+  long: number
+): Promise<Comp[]> {
+  const dLat = MAX_LADDER_RADIUS_MI / 69;
+  const dLong = MAX_LADDER_RADIUS_MI / (69 * Math.max(Math.cos((lat * Math.PI) / 180), 0.01));
+
+  const comps: Comp[] = [];
+  const PAGE = 1000;
+  for (let offset = 0; ; offset += PAGE) {
+    const { data, error } = await supabase
+      .from("comps_with_coords")
+      .select("parcel_number,lat,long,livable_sqft,price_per_sqft")
+      .gte("lat", lat - dLat)
+      .lte("lat", lat + dLat)
+      .gte("long", long - dLong)
+      .lte("long", long + dLong)
+      .range(offset, offset + PAGE - 1);
+    if (error) throw new Error(`Failed to load nearby comps: ${error.message}`);
+    if (!data || data.length === 0) break;
+    for (const r of data) {
+      if (
+        r.parcel_number === null ||
+        r.lat === null ||
+        r.long === null ||
+        r.livable_sqft === null ||
+        r.price_per_sqft === null
+      )
+        continue;
+      comps.push({
+        parcelNumber: r.parcel_number,
+        lat: r.lat,
+        long: r.long,
+        sqft: r.livable_sqft,
+        pricePerSqft: r.price_per_sqft,
+      });
+    }
+    if (data.length < PAGE) break;
+  }
+  return comps;
+}
+
+/** Single-zip lookup for the fallback path — no need to load every zip's average. */
+async function loadZipComp(supabase: SupabaseClient, zip: string): Promise<AreaComp | null> {
+  const { data, error } = await supabase
+    .from("comp_averages_by_zip")
+    .select("*")
+    .eq("zip", zip)
+    .maybeSingle();
+  if (error) throw new Error(`Failed to load zip comp for ${zip}: ${error.message}`);
+  if (!data || data.avg_price_per_sqft === null) return null;
+  return {
+    source: "zip",
+    key: zip,
+    avgPricePerSqft: data.avg_price_per_sqft,
+    compCount: data.comp_count ?? 0,
+  };
+}
 
 // A handful of Assessor records carry literal placeholder text ("N/A", "NA")
 // in SITUSADDRESS/SITUSCITY rather than leaving it blank — treat those the
@@ -111,11 +181,14 @@ export async function buildCompPacketData(listingId: string): Promise<CompPacket
     throw new Error(`Listing ${listingId} has no sqft on file — cannot rebuild ARV/rehab figures`);
   }
 
-  const [comps, zipData] = await Promise.all([loadComps(supabase), loadZipComps(supabase)]);
-
   // Missing subject coordinates isn't fatal — same as scoring itself, it just
   // means no radius tier can match, so this falls through to the zip fallback
-  // below rather than erroring.
+  // below rather than erroring. Only fetch the nearby comp pool when there's a
+  // subject location to filter around.
+  const comps =
+    listing.lat !== null && listing.long !== null
+      ? await loadNearbyComps(supabase, listing.lat, listing.long)
+      : [];
   const details =
     listing.lat !== null && listing.long !== null
       ? selectRadiusCompDetails({ lat: listing.lat, long: listing.long, sqft: listing.sqft }, comps)
@@ -178,7 +251,7 @@ export async function buildCompPacketData(listingId: string): Promise<CompPacket
     const zip = listing.zip ?? "unknown";
     tierLabel = `ZIP AVERAGE · ${zip}`;
     tierDescription = `in zip ${zip}`;
-    const zipComp = listing.zip ? zipData.byZip.get(listing.zip) : null;
+    const zipComp = listing.zip ? await loadZipComp(supabase, listing.zip) : null;
     areaPricePerSqft = zipComp?.avgPricePerSqft ?? 0;
     compCount = zipComp?.compCount ?? 0;
 

@@ -64,7 +64,11 @@ and confirm rows land in `clozers_listings`.
 2. Set env vars: `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`,
    `MARICOPA_API_TOKEN`, `RESEND_API_KEY`, `DIGEST_TO_EMAIL`,
    `DIGEST_FROM_EMAIL`, `CRON_SECRET` (generate with `openssl rand -hex 32`).
-3. `vercel.json` already defines all three cron schedules; Vercel picks them
+3. Set `APP_BASE_URL` to the deployment's own public URL (e.g.
+   `https://deal-checker.vercel.app`, or your custom domain once attached) —
+   this powers the "Generate Comp Packet" links in the digest (see §8 below).
+   Leaving it unset just omits those links; nothing else breaks.
+4. `vercel.json` already defines all three cron schedules; Vercel picks them
    up on deploy. Cron requires a Pro plan for the 300s `maxDuration` on
    `/api/cron/assessor-refresh`.
 
@@ -103,7 +107,29 @@ Comp selection ladder (first tier reaching `COMP_MIN_COUNT` wins, else zip-level
 zip is outside Maricopa coverage are filtered out of scoring and logged
 minimally (a one-line console log of the distinct zips in the score run).
 
-## 8. Tuning
+## 8. Comp packets
+
+Each flagged listing in the digest email gets a "Generate Comp Packet" link
+(`GET {APP_BASE_URL}/api/comp-packet/{listing_id}`) that renders a one-page
+investor PDF on the spot — no terminal, no login. It's the same generator as
+`npm run comp-packet -- <listing_id>` (`src/lib/compPacket/`), just served
+over HTTP.
+
+**This route is intentionally unauthenticated.** Anyone who has the emailed
+link — including a forward — can open it; the only gate is the listing_id
+itself being an unguessable UUID, not a login or the `CRON_SECRET` the other
+routes use (a plain email link can't carry a bearer header). The underlying
+data is Assessor public record plus an already-publicly-marketed listing, so
+this is a deliberate, scoped tradeoff for one-click access — not an oversight.
+If that's ever not the right call for this data, the fix is adding real auth
+to just this one route.
+
+The route queries comps in a bounding box around the one subject listing
+(`loadNearbyComps` in `src/lib/compPacket/data.ts`), not the full county pool
+`loadComps()` uses for batch scoring — a real-time click needs to be fast, and
+a single subject only ever needs its nearby comps.
+
+## 9. Tuning
 
 `REHAB_PER_SQFT` and `BELOW_AVG_THRESHOLD` (and the margin threshold) are
 explicit placeholders — see comments in `src/lib/config.ts`. Revisit them

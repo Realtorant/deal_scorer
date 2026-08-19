@@ -10,6 +10,11 @@ export interface DigestContext {
   // Total in-coverage listings scored this run — included even on a quiet run
   // so the email is a genuine liveness signal, not just a bare "nothing here".
   scoredCount: number;
+  // Base URL of the deployed app (e.g. https://deal-checker.vercel.app), used
+  // to build "Generate Comp Packet" links. Null when APP_BASE_URL isn't set —
+  // in that case the digest just omits the links rather than shipping a
+  // broken one.
+  appBaseUrl: string | null;
 }
 
 const currency = new Intl.NumberFormat("en-US", {
@@ -71,7 +76,12 @@ function byMarginDesc(a: DigestRow, b: DigestRow): number {
   return (b.scored.margin_pct ?? -Infinity) - (a.scored.margin_pct ?? -Infinity);
 }
 
-function digestRowHtml({ listing, scored }: DigestRow): string {
+function packetUrl(listingId: string, appBaseUrl: string | null): string | null {
+  return appBaseUrl ? `${appBaseUrl}/api/comp-packet/${encodeURIComponent(listingId)}` : null;
+}
+
+function digestRowHtml({ listing, scored }: DigestRow, appBaseUrl: string | null): string {
+  const url = packetUrl(listing.listing_id, appBaseUrl);
   return `
         <tr>
           <td><a href="${escapeHtml(listing.url)}">${escapeHtml(listing.address)}</a></td>
@@ -82,10 +92,12 @@ function digestRowHtml({ listing, scored }: DigestRow): string {
           <td>${pct(scored.margin_pct)}</td>
           <td>${scored.comp_count ?? "—"} (${scored.comp_source ?? "n/a"})</td>
           <td>${escapeHtml(scored.flag_reason ?? "")}</td>
+          <td>${url ? `<a href="${escapeHtml(url)}">Generate →</a>` : "—"}</td>
         </tr>`;
 }
 
-function topPickCardHtml({ listing, scored }: DigestRow, rank: number): string {
+function topPickCardHtml({ listing, scored }: DigestRow, rank: number, appBaseUrl: string | null): string {
+  const url = packetUrl(listing.listing_id, appBaseUrl);
   return `
       <div style="border:1px solid #ddd; border-left:4px solid #2e7d32; border-radius:4px; padding:12px 16px; margin-bottom:10px;">
         <div style="font-weight:bold; font-size:1.05em;">
@@ -96,6 +108,13 @@ function topPickCardHtml({ listing, scored }: DigestRow, rank: number): string {
           ${perSqft(scored.list_price_per_sqft)} vs area ${perSqft(scored.area_price_per_sqft)}
         </div>
         <div style="color:#666; font-size:0.9em; margin-top:2px;">${escapeHtml(scored.flag_reason ?? "")}</div>
+        ${
+          url
+            ? `<div style="margin-top:8px;"><a href="${escapeHtml(
+                url
+              )}" style="display:inline-block; background:#20211E; color:#C5A572; border:1px solid #C5A572; border-radius:4px; padding:6px 14px; font-size:0.85em; font-weight:bold; text-decoration:none;">Generate Comp Packet →</a></div>`
+            : ""
+        }
       </div>`;
 }
 
@@ -111,17 +130,23 @@ export function buildDigestHtml(rows: DigestRow[], context: DigestContext): stri
       </div>`;
   }
 
+  if (!context.appBaseUrl) {
+    console.warn(
+      "APP_BASE_URL is not set — digest emails will omit 'Generate Comp Packet' links."
+    );
+  }
+
   const ranked = [...rows].sort(byMarginDesc);
   const topPicks = ranked.slice(0, 3);
   const topPicksHtml =
     topPicks.length > 0
       ? `
       <h3 style="margin-bottom:8px;">🏆 Top ${topPicks.length} by margin</h3>
-      ${topPicks.map((row, i) => topPickCardHtml(row, i + 1)).join("")}
+      ${topPicks.map((row, i) => topPickCardHtml(row, i + 1, context.appBaseUrl)).join("")}
       <hr style="margin:20px 0; border:none; border-top:1px solid #ddd;" />`
       : "";
 
-  const tableRows = ranked.map(digestRowHtml).join("");
+  const tableRows = ranked.map((row) => digestRowHtml(row, context.appBaseUrl)).join("");
 
   return `
     <div style="font-family: -apple-system, Helvetica, Arial, sans-serif;">
@@ -138,6 +163,7 @@ export function buildDigestHtml(rows: DigestRow[], context: DigestContext): stri
             <th>Margin %</th>
             <th>Comp Count</th>
             <th>Flag Reason</th>
+            <th>Packet</th>
           </tr>
         </thead>
         <tbody>${tableRows}</tbody>
